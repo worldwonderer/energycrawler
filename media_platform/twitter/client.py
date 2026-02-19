@@ -38,7 +38,16 @@ from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_not_excepti
 
 from tools import utils
 
-from .api import GQL_URL, PUBLIC_BEARER_TOKEN, OPERATIONS, GQL_FEATURES, get_gql_url
+from .api import (
+    PUBLIC_BEARER_TOKEN,
+    OPERATIONS,
+    GQL_FEATURES,
+    get_gql_url_by_path,
+    get_search_timeline_operation_paths,
+    refresh_search_timeline_query_ids,
+    set_primary_search_timeline_query_id,
+    build_operation_path,
+)
 from .exception import (
     TwitterError,
     TwitterAuthError,
@@ -264,6 +273,7 @@ class TwitterClient:
         operation: str,
         variables: Dict[str, Any],
         features: Optional[Dict[str, Any]] = None,
+        operation_path: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Make API request to Twitter GraphQL endpoint.
@@ -288,10 +298,10 @@ class TwitterClient:
             await self.initialize()
 
         # Build URL
-        if operation not in OPERATIONS:
+        if operation not in OPERATIONS and not operation_path:
             raise TwitterAPIError(f"Unknown operation: {operation}")
-
-        url = get_gql_url(operation)
+        active_operation_path = operation_path or OPERATIONS[operation]
+        url = get_gql_url_by_path(active_operation_path)
 
         # Build request parameters
         if features is None:
@@ -303,7 +313,7 @@ class TwitterClient:
         }
 
         # Build full URL with path for transaction ID
-        path = f"/i/api/graphql/{OPERATIONS[operation]}"
+        path = f"/i/api/graphql/{active_operation_path}"
 
         # Get transaction ID
         transaction_id = await self._get_transaction_id(method, path)
@@ -362,6 +372,48 @@ class TwitterClient:
         except json.JSONDecodeError as e:
             raise TwitterAPIError(f"Failed to parse response: {e}")
 
+    async def _request_search_timeline_with_fallback(
+        self,
+        variables: Dict[str, Any],
+        features: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        attempted: List[str] = []
+        candidate_paths = get_search_timeline_operation_paths()
+
+        async def _try_paths(paths: List[str]) -> Optional[Dict[str, Any]]:
+            for operation_path in paths:
+                if operation_path in attempted:
+                    continue
+                attempted.append(operation_path)
+                try:
+                    data = await self._request(
+                        "GET",
+                        "SearchTimeline",
+                        variables,
+                        features,
+                        operation_path=operation_path,
+                    )
+                    query_id = operation_path.split("/", 1)[0]
+                    set_primary_search_timeline_query_id(query_id)
+                    return data
+                except TwitterNotFoundError:
+                    continue
+            return None
+
+        found = await _try_paths(candidate_paths)
+        if found is not None:
+            return found
+
+        refreshed_ids = refresh_search_timeline_query_ids()
+        refreshed_paths = [build_operation_path(query_id, "SearchTimeline") for query_id in refreshed_ids]
+        found = await _try_paths(refreshed_paths)
+        if found is not None:
+            return found
+
+        raise TwitterNotFoundError(
+            f"Resource not found: SearchTimeline (attempted_paths={len(attempted)})"
+        )
+
     # ==================== API Methods ====================
 
     async def search(
@@ -396,7 +448,7 @@ class TwitterClient:
         features = GQL_FEATURES.copy()
         features["responsive_web_search_deduplication_tiles_enabled"] = False
 
-        data = await self._request("GET", "SearchTimeline", variables, features)
+        data = await self._request_search_timeline_with_fallback(variables, features)
 
         page = self._build_timeline_page(data, normalized_count)
         return page["tweets"]
@@ -862,7 +914,7 @@ class TwitterClient:
 
         features = GQL_FEATURES.copy()
         features["responsive_web_search_deduplication_tiles_enabled"] = False
-        data = await self._request("GET", "SearchTimeline", variables, features)
+        data = await self._request_search_timeline_with_fallback(variables, features)
         return self._build_timeline_page(data, normalized_count)
 
     async def get_tweet_replies(

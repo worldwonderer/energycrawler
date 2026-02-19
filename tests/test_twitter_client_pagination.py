@@ -84,7 +84,7 @@ def _timeline_response(entries: list[dict]) -> dict:
 async def test_search_tweets_extracts_cursor_and_limits_count():
     client = TwitterClient(energy_adapter=_DummyEnergyAdapter())
 
-    async def fake_request(_method, operation, _variables, _features=None):
+    async def fake_request(_method, operation, _variables, _features=None, operation_path=None):
         assert operation == "SearchTimeline"
         return _timeline_response(
             [
@@ -108,7 +108,7 @@ async def test_get_user_tweets_returns_page_contract_and_operation():
     client = TwitterClient(energy_adapter=_DummyEnergyAdapter())
     call_state = {}
 
-    async def fake_request(_method, operation, variables, _features=None):
+    async def fake_request(_method, operation, variables, _features=None, operation_path=None):
         call_state["operation"] = operation
         call_state["count"] = variables["count"]
         return _timeline_response([_tweet_entry("10", "dave", "single page")])
@@ -127,7 +127,7 @@ async def test_get_user_tweets_returns_page_contract_and_operation():
 async def test_get_tweet_replies_excludes_focal_tweet():
     client = TwitterClient(energy_adapter=_DummyEnergyAdapter())
 
-    async def fake_request(_method, operation, _variables, _features=None):
+    async def fake_request(_method, operation, _variables, _features=None, operation_path=None):
         assert operation == "TweetDetail"
         return _timeline_response(
             [

@@ -18,7 +18,12 @@
 # 使用本代码即表示您同意遵守上述原则和LICENSE中的所有条款。
 
 
-from typing import Dict, Any
+from __future__ import annotations
+
+import re
+from typing import Dict, Any, List
+
+import requests
 
 
 # GraphQL API base URL
@@ -27,10 +32,84 @@ GQL_URL = "https://x.com/i/api/graphql"
 # Public bearer token (used for unauthenticated requests)
 PUBLIC_BEARER_TOKEN = "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
 
+# SearchTimeline query IDs can rotate frequently.
+# Keep a small fallback list and let runtime refresh from X web bundle.
+SEARCH_TIMELINE_QUERY_IDS: List[str] = [
+    "cGK-Qeg1XJc2sZ6kgQw_Iw",
+    "AIdc203rPpK_k_2KWSdm7g",
+]
+
+
+def build_operation_path(query_id: str, operation_name: str) -> str:
+    return f"{query_id}/{operation_name}"
+
+
+def _dedupe_keep_order(items: List[str]) -> List[str]:
+    deduped: List[str] = []
+    for item in items:
+        if item and item not in deduped:
+            deduped.append(item)
+    return deduped
+
+
+def get_search_timeline_operation_paths() -> List[str]:
+    return [build_operation_path(query_id, "SearchTimeline") for query_id in SEARCH_TIMELINE_QUERY_IDS]
+
+
+def set_primary_search_timeline_query_id(query_id: str) -> None:
+    if not query_id:
+        return
+    global SEARCH_TIMELINE_QUERY_IDS
+    SEARCH_TIMELINE_QUERY_IDS = _dedupe_keep_order([query_id, *SEARCH_TIMELINE_QUERY_IDS])
+    OPERATIONS["SearchTimeline"] = build_operation_path(SEARCH_TIMELINE_QUERY_IDS[0], "SearchTimeline")
+
+
+def refresh_search_timeline_query_ids(timeout_sec: int = 20, max_assets: int = 8) -> List[str]:
+    """
+    Pull latest SearchTimeline query id candidates from X web bundle.
+    """
+    global SEARCH_TIMELINE_QUERY_IDS
+    try:
+        home_resp = requests.get("https://x.com", timeout=timeout_sec)
+        home_resp.raise_for_status()
+    except Exception:
+        return SEARCH_TIMELINE_QUERY_IDS[:]
+
+    asset_urls = re.findall(
+        r'src="(https://abs\.twimg\.com/responsive-web/client-web/[^"]+\.js)"',
+        home_resp.text,
+    )
+    found_ids: List[str] = []
+    patterns = [
+        re.compile(r'queryId:"([A-Za-z0-9_-]{10,})",operationName:"SearchTimeline"'),
+        re.compile(r'"queryId":"([A-Za-z0-9_-]{10,})","operationName":"SearchTimeline"'),
+        re.compile(r'operationName:"SearchTimeline",queryId:"([A-Za-z0-9_-]{10,})"'),
+    ]
+
+    for asset_url in asset_urls[:max_assets]:
+        try:
+            content_resp = requests.get(asset_url, timeout=timeout_sec)
+            content_resp.raise_for_status()
+            content = content_resp.text
+        except Exception:
+            continue
+
+        for pattern in patterns:
+            for match in pattern.findall(content):
+                found_ids.append(match)
+
+    if not found_ids:
+        return SEARCH_TIMELINE_QUERY_IDS[:]
+
+    deduped_found = _dedupe_keep_order(found_ids)
+    SEARCH_TIMELINE_QUERY_IDS = _dedupe_keep_order(deduped_found + SEARCH_TIMELINE_QUERY_IDS)
+    OPERATIONS["SearchTimeline"] = build_operation_path(SEARCH_TIMELINE_QUERY_IDS[0], "SearchTimeline")
+    return SEARCH_TIMELINE_QUERY_IDS[:]
+
+
 # GraphQL operation IDs
 OPERATIONS: Dict[str, str] = {
-    # Keep SearchTimeline query id aligned with X web bundle.
-    "SearchTimeline": "cGK-Qeg1XJc2sZ6kgQw_Iw/SearchTimeline",
+    "SearchTimeline": build_operation_path(SEARCH_TIMELINE_QUERY_IDS[0], "SearchTimeline"),
     "UserByScreenName": "1VOOyvKkiI3FMmkeDNxM9A/UserByScreenName",
     "UserByRestId": "WJ7rCtezBVT6nk6VM5R8Bw/UserByRestId",
     "TweetDetail": "_8aYOgEDz35BrBcBal1-_w/TweetDetail",
@@ -85,6 +164,12 @@ def get_gql_url(operation: str) -> str:
         raise ValueError(f"Unknown operation: {operation}")
 
     return f"{GQL_URL}/{OPERATIONS[operation]}"
+
+
+def get_gql_url_by_path(operation_path: str) -> str:
+    if not operation_path or "/" not in operation_path:
+        raise ValueError(f"Invalid operation path: {operation_path}")
+    return f"{GQL_URL}/{operation_path}"
 
 
 def get_search_url(query: str, search_type: str = "Latest") -> str:

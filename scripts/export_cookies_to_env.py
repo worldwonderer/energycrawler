@@ -74,6 +74,11 @@ def main() -> None:
         default="all",
         help="Which platform cookies to export",
     )
+    parser.add_argument(
+        "--strict-x-auth",
+        action="store_true",
+        help="Exit non-zero if exported X cookies do not include auth_token + ct0",
+    )
     args = parser.parse_args()
 
     client = BrowserClient(args.host, args.port)
@@ -115,6 +120,26 @@ def main() -> None:
         print(f"- {key}: len={len(value)}")
     for key, value in summary.items():
         print(f"- {key}: {value}")
+
+    if args.platform in {"all", "x"}:
+        cookie_map = _cookie_map(updates.get("TWITTER_COOKIE", ""))
+        has_auth = bool(cookie_map.get("auth_token"))
+        has_ct0 = bool(cookie_map.get("ct0"))
+        if has_auth and has_ct0:
+            print("- x_auth: auth_token + ct0 captured")
+        else:
+            message = "- x_auth: missing auth_token and/or ct0 in exported TWITTER_COOKIE"
+            if args.strict_x_auth:
+                raise SystemExit(message)
+            print(message)
+
+    if args.platform in {"all", "xhs"}:
+        cookie_map = _cookie_map(updates.get("COOKIES", ""))
+        has_a1 = bool(cookie_map.get("a1"))
+        if has_a1:
+            print("- xhs_auth: a1 captured")
+        else:
+            print("- xhs_auth: missing a1 in exported COOKIES")
 
 
 if __name__ == "__main__":

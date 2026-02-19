@@ -65,6 +65,12 @@ bash energy-service/start-macos.sh
 uv run python scripts/export_cookies_to_env.py --platform all --xhs-browser-id manual_login_xhs --x-browser-id manual_login_x
 ```
 
+登录态快速检查：
+
+```bash
+uv run python scripts/check_login_state.py --host localhost --port 50051
+```
+
 ### 4. 运行 CLI
 
 小红书关键词抓取：
