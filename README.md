@@ -54,7 +54,7 @@ bash energy-service/start-macos.sh
 
 - `PLATFORM = "xhs" | "x"`
 - `CRAWLER_TYPE = "search" | "detail" | "creator"`
-- `LOGIN_TYPE = "qrcode" | "cookie" | "phone"`
+- `LOGIN_TYPE = "cookie"`（当前仅保留 Cookie 注入登录态）
 - `ENERGY_SERVICE_ADDRESS = "localhost:50051"`
 - X 平台鉴权：`TWITTER_AUTH_TOKEN`、`TWITTER_CT0`（也支持 `TWITTER_COOKIE` 自动提取并透传全量 Cookie）
 
@@ -63,13 +63,13 @@ bash energy-service/start-macos.sh
 小红书关键词抓取：
 
 ```bash
-uv run main.py --platform xhs --lt qrcode --type search --keywords 编程副业,独立开发
+uv run main.py --platform xhs --lt cookie --type search --keywords 编程副业,独立开发
 ```
 
 小红书详情抓取：
 
 ```bash
-uv run main.py --platform xhs --lt qrcode --type detail --specified_id "https://www.xiaohongshu.com/explore/xxxx?xsec_token=xxxx"
+uv run main.py --platform xhs --lt cookie --type detail --specified_id "https://www.xiaohongshu.com/explore/xxxx?xsec_token=xxxx"
 ```
 
 X 关键词抓取：
