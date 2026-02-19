@@ -1,0 +1,144 @@
+syntax = "proto3";
+
+package browser;
+
+option go_package = "energy-service/proto";
+
+// BrowserService provides Energy-based browser automation
+service BrowserService {
+    // Browser lifecycle
+    rpc CreateBrowser(CreateBrowserRequest) returns (CreateBrowserResponse);
+    rpc CloseBrowser(CloseBrowserRequest) returns (CloseBrowserResponse);
+
+    // Navigation
+    rpc Navigate(NavigateRequest) returns (NavigateResponse);
+
+    // Cookie management
+    rpc GetCookies(GetCookiesRequest) returns (GetCookiesResponse);
+    rpc SetCookies(SetCookiesRequest) returns (SetCookiesResponse);
+
+    // JavaScript execution
+    rpc ExecuteJS(ExecuteJSRequest) returns (ExecuteJSResponse);
+
+    // Proxy configuration
+    rpc SetProxy(SetProxyRequest) returns (SetProxyResponse);
+
+    // Signature execution (for platform anti-detection)
+    rpc ExecuteSignature(ExecuteSignatureRequest) returns (ExecuteSignatureResponse);
+
+    // Click element
+    rpc Click(ClickRequest) returns (ClickResponse);
+}
+
+// Placeholder message definitions (to be expanded in Phase 1.2)
+message CreateBrowserRequest {
+    string browser_id = 1;
+    bool headless = 2;
+}
+
+message CreateBrowserResponse {
+    bool success = 1;
+    string error = 2;
+}
+
+message CloseBrowserRequest {
+    string browser_id = 1;
+}
+
+message CloseBrowserResponse {
+    bool success = 1;
+    string error = 2;
+}
+
+message NavigateRequest {
+    string browser_id = 1;
+    string url = 2;
+    int32 timeout_ms = 3;
+}
+
+message NavigateResponse {
+    bool success = 1;
+    string error = 2;
+    int32 status_code = 3;
+}
+
+message GetCookiesRequest {
+    string browser_id = 1;
+    string url = 2;
+}
+
+message GetCookiesResponse {
+    bool success = 1;
+    string error = 2;
+    repeated Cookie cookies = 3;
+}
+
+message Cookie {
+    string name = 1;
+    string value = 2;
+    string domain = 3;
+    string path = 4;
+    bool secure = 5;
+    bool http_only = 6;
+}
+
+message SetCookiesRequest {
+    string browser_id = 1;
+    repeated Cookie cookies = 2;
+}
+
+message SetCookiesResponse {
+    bool success = 1;
+    string error = 2;
+}
+
+message ExecuteJSRequest {
+    string browser_id = 1;
+    string script = 2;
+}
+
+message ExecuteJSResponse {
+    bool success = 1;
+    string error = 2;
+    string result = 3;
+}
+
+message SetProxyRequest {
+    string browser_id = 1;
+    string proxy_url = 2;
+    string username = 3;
+    string password = 4;
+}
+
+message SetProxyResponse {
+    bool success = 1;
+    string error = 2;
+}
+
+message ExecuteSignatureRequest {
+    string browser_id = 1;
+    string platform = 2;  // e.g., "xhs", "douyin"
+    string url = 3;
+}
+
+message ExecuteSignatureResponse {
+    bool success = 1;
+    string error = 2;
+    map<string, string> signatures = 3;
+}
+
+message ClickRequest {
+    string browser_id = 1;
+    string selector = 2;       // CSS selector (e.g., "#login-btn", ".submit-button")
+    int32 x = 3;               // X coordinate (used if selector is empty)
+    int32 y = 4;               // Y coordinate (used if selector is empty)
+    int32 timeout_ms = 5;      // Timeout for waiting for element
+}
+
+message ClickResponse {
+    bool success = 1;
+    string error = 2;
+    bool element_found = 3;    // Whether element was found (for selector-based clicks)
+    int32 clicked_x = 4;       // Actual X coordinate clicked
+    int32 clicked_y = 5;       // Actual Y coordinate clicked
+}
