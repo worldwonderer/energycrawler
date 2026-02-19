@@ -15,7 +15,6 @@ import (
 	"energy-service/server"
 
 	"github.com/energye/energy/v2/cef"
-	"github.com/energye/energy/v2/cef/process"
 	"github.com/energye/energy/v2/consts"
 	"github.com/energye/golcl/lcl"
 )
@@ -45,8 +44,10 @@ func main() {
 	app.SetDisableFeatures("FontationsBackend")
 
 	// Only run gRPC server in the main process
-	// CEF creates multiple subprocesses (renderer, GPU, etc.) that also run main()
-	if !process.Args.IsMain() {
+	// CEF creates multiple subprocesses (renderer, GPU, etc.) that also run main().
+	// `process.Args.IsMain()` can be unreliable in some app-bundle launch paths,
+	// so we explicitly gate by the standard CEF `--type=...` subprocess arg.
+	if isCEFSubProcess(os.Args[1:]) {
 		// This is a subprocess (renderer, GPU, etc.), just run CEF and return
 		cef.Run(app)
 		return
@@ -216,4 +217,13 @@ func getEnvIntOrDefault(key string, defaultVal int) int {
 // splitN splits a string into at most n parts
 func splitN(s string, sep string, n int) []string {
 	return strings.SplitN(s, sep, n)
+}
+
+func isCEFSubProcess(args []string) bool {
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "--type=") {
+			return true
+		}
+	}
+	return false
 }

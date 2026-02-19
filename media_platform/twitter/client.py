@@ -75,6 +75,7 @@ class TwitterClient:
         energy_adapter: TwitterEnergyAdapter,
         auth_token: str = "",
         ct0: str = "",
+        cookie_header: str = "",
         timeout: int = 30,
         proxies: Optional[Dict] = None,
     ):
@@ -85,12 +86,18 @@ class TwitterClient:
             energy_adapter: Energy browser adapter for transaction ID generation
             auth_token: Twitter auth_token cookie value
             ct0: Twitter ct0 (CSRF) cookie value
+            cookie_header: Full Twitter cookie header string
             timeout: Request timeout in seconds
             proxies: Proxy configuration for curl_cffi
         """
         self._energy_adapter = energy_adapter
         self._auth_token = auth_token
         self._ct0 = ct0
+        self._cookie_map = self._parse_cookie_header(cookie_header)
+        if not self._auth_token:
+            self._auth_token = self._cookie_map.get("auth_token", "")
+        if not self._ct0:
+            self._ct0 = self._cookie_map.get("ct0", "")
         self._timeout = timeout
         self._proxies = proxies
         self._user_agent: Optional[str] = None
@@ -115,6 +122,20 @@ class TwitterClient:
                     normalized[f"{stripped_key}://"] = value
                 self._session.proxies.update(normalized)
             utils.logger.warning("[TwitterClient] curl_cffi not installed, using requests fallback session.")
+
+    @staticmethod
+    def _parse_cookie_header(cookie_header: str) -> Dict[str, str]:
+        cookie_dict: Dict[str, str] = {}
+        for item in cookie_header.split(";"):
+            item = item.strip()
+            if not item or "=" not in item:
+                continue
+            key, value = item.split("=", 1)
+            key = key.strip()
+            value = value.strip()
+            if key:
+                cookie_dict[key] = value
+        return cookie_dict
 
     async def initialize(self) -> None:
         """
@@ -144,8 +165,11 @@ class TwitterClient:
             ct0: Twitter ct0 (CSRF) cookie value (optional, will be extracted from cookies if not provided)
         """
         self._auth_token = auth_token
+        if auth_token:
+            self._cookie_map["auth_token"] = auth_token
         if ct0:
             self._ct0 = ct0
+            self._cookie_map["ct0"] = ct0
 
     def update_auth_from_cookies(self, cookies: Dict[str, str]) -> None:
         """
@@ -154,6 +178,7 @@ class TwitterClient:
         Args:
             cookies: Dictionary containing auth_token and optionally ct0
         """
+        self._cookie_map.update(cookies)
         if "auth_token" in cookies:
             self._auth_token = cookies["auth_token"]
         if "ct0" in cookies:
@@ -221,12 +246,12 @@ class TwitterClient:
         Returns:
             Cookie string for Cookie header
         """
-        cookies = []
+        cookies = dict(self._cookie_map)
         if self._auth_token:
-            cookies.append(f"auth_token={self._auth_token}")
+            cookies["auth_token"] = self._auth_token
         if self._ct0:
-            cookies.append(f"ct0={self._ct0}")
-        return "; ".join(cookies)
+            cookies["ct0"] = self._ct0
+        return "; ".join([f"{key}={value}" for key, value in cookies.items()])
 
     @retry(
         stop=stop_after_attempt(3),
@@ -285,7 +310,9 @@ class TwitterClient:
 
         # Build headers
         headers = self._build_headers(method, path, transaction_id)
-        headers["cookie"] = self._build_cookie_string()
+        cookie_header = self._build_cookie_string()
+        if cookie_header:
+            headers["cookie"] = cookie_header
 
         try:
             # Make request with curl_cffi
@@ -936,6 +963,7 @@ async def create_twitter_client(
     energy_adapter: TwitterEnergyAdapter,
     auth_token: str = "",
     ct0: str = "",
+    cookie_header: str = "",
     timeout: int = 30,
     proxies: Optional[Dict] = None,
 ) -> TwitterClient:
@@ -946,6 +974,7 @@ async def create_twitter_client(
         energy_adapter: Energy browser adapter for transaction ID generation
         auth_token: Twitter auth_token cookie value
         ct0: Twitter ct0 (CSRF) cookie value
+        cookie_header: Full Twitter cookie header string
         timeout: Request timeout in seconds
         proxies: Proxy configuration
 
@@ -956,6 +985,7 @@ async def create_twitter_client(
         energy_adapter=energy_adapter,
         auth_token=auth_token,
         ct0=ct0,
+        cookie_header=cookie_header,
         timeout=timeout,
         proxies=proxies,
     )

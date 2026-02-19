@@ -70,6 +70,7 @@ class TwitterCrawler(AbstractCrawler):
         # Configuration
         self._auth_token = getattr(config, 'TWITTER_AUTH_TOKEN', '')
         self._ct0 = getattr(config, 'TWITTER_CT0', '')
+        self._cookie_header = getattr(config, 'TWITTER_COOKIE', '')
         self._headless = getattr(config, 'TWITTER_HEADLESS', True)
         self._enable_login = getattr(config, 'TWITTER_ENABLE_LOGIN', False)
         self._search_type = getattr(config, 'TWITTER_SEARCH_TYPE', 'Latest')
@@ -185,8 +186,57 @@ class TwitterCrawler(AbstractCrawler):
         # Connect to Energy service
         self.energy_adapter.connect()
 
-        # Navigate to Twitter
+        # Open domain once before cookie injection to ensure cookie scope is available.
         self.energy_adapter.browser.navigate(browser_id, "https://x.com", 30000)
+        await asyncio.sleep(2)
+
+        # Inject full cookie jar into browser session when provided.
+        if self._cookie_header:
+            cookie_dict = utils.convert_str_cookie_to_dict(self._cookie_header)
+            if cookie_dict:
+                ok_primary = self.energy_adapter.set_cookies_from_dict(cookie_dict, domain=".x.com")
+                ok_host = self.energy_adapter.set_cookies_from_dict(cookie_dict, domain="x.com")
+                browser_all_cookies = self.energy_adapter.get_all_cookies()
+                browser_cookie_dict = {
+                    item.get("name", ""): item.get("value", "")
+                    for item in browser_all_cookies
+                    if item.get("name")
+                }
+                has_auth = bool(browser_cookie_dict.get("auth_token"))
+                has_ct0 = bool(browser_cookie_dict.get("ct0"))
+
+                # Fallback: inject via page context when service-level SetCookies
+                # does not materialize auth cookies in browser storage.
+                ok_js = False
+                if not (has_auth and has_ct0):
+                    ok_js = self.energy_adapter.set_cookies_via_js(cookie_dict, domain="x.com")
+                    await asyncio.sleep(1)
+                    browser_all_cookies = self.energy_adapter.get_all_cookies()
+                    browser_cookie_dict = {
+                        item.get("name", ""): item.get("value", "")
+                        for item in browser_all_cookies
+                        if item.get("name")
+                    }
+                    has_auth = bool(browser_cookie_dict.get("auth_token"))
+                    has_ct0 = bool(browser_cookie_dict.get("ct0"))
+
+                utils.logger.info(
+                    f"[TwitterCrawler._init_energy_adapter] Injected {len(cookie_dict)} cookies into Energy browser "
+                    f"(service_domains: .x.com={ok_primary}, x.com={ok_host}, js_fallback={ok_js}, "
+                    f"browser_has_auth_token={has_auth}, browser_has_ct0={has_ct0}, "
+                    f"browser_cookie_count={len(browser_all_cookies)})"
+                )
+
+                page_login_ok = await self.energy_adapter.verify_login_via_page()
+                if page_login_ok:
+                    utils.logger.info("[TwitterCrawler._init_energy_adapter] Browser login state verified via page")
+                else:
+                    utils.logger.warning(
+                        "[TwitterCrawler._init_energy_adapter] Cookie injected but page still looks logged out "
+                        "(cookie may be invalid/expired or blocked by risk controls)"
+                    )
+            else:
+                utils.logger.warning("[TwitterCrawler._init_energy_adapter] TWITTER_COOKIE provided but parsing returned empty")
 
         # Wait for page to load
         await asyncio.sleep(3)
@@ -201,6 +251,8 @@ class TwitterCrawler(AbstractCrawler):
         # Get cookies from Energy adapter if available
         if self.energy_adapter:
             cookies = self.energy_adapter.get_cookies()
+            if not self._cookie_header and cookies:
+                self._cookie_header = "; ".join([f"{k}={v}" for k, v in cookies.items()])
             if not self._auth_token and 'auth_token' in cookies:
                 self._auth_token = cookies['auth_token']
             if not self._ct0 and 'ct0' in cookies:
@@ -211,6 +263,7 @@ class TwitterCrawler(AbstractCrawler):
             proxies={"http://": httpx_proxy_format, "https://": httpx_proxy_format} if httpx_proxy_format else None,
             auth_token=self._auth_token,
             ct0=self._ct0,
+            cookie_header=self._cookie_header,
             energy_adapter=self.energy_adapter,
         )
 
@@ -248,15 +301,20 @@ class TwitterCrawler(AbstractCrawler):
                         utils.logger.info("[TwitterCrawler.search] No more tweets found")
                         break
 
+                    remaining = self._max_count - total_count
+                    tweets_to_process = tweets[:remaining]
+                    if not tweets_to_process:
+                        break
+
                     # Process tweets
                     semaphore = asyncio.Semaphore(config.MAX_CONCURRENCY_NUM)
                     task_list = [
                         self._process_tweet_async_task(tweet, semaphore)
-                        for tweet in tweets
+                        for tweet in tweets_to_process
                     ]
                     await asyncio.gather(*task_list)
 
-                    total_count += len(tweets)
+                    total_count += len(tweets_to_process)
 
                     # Check for more results
                     if not result.get("has_more", False):
@@ -305,15 +363,20 @@ class TwitterCrawler(AbstractCrawler):
                         utils.logger.info("[TwitterCrawler.get_user_tweets] No more tweets found")
                         break
 
+                    remaining = self._max_count - total_count
+                    tweets_to_process = tweets[:remaining]
+                    if not tweets_to_process:
+                        break
+
                     # Process tweets
                     semaphore = asyncio.Semaphore(config.MAX_CONCURRENCY_NUM)
                     task_list = [
                         self._process_tweet_async_task(tweet, semaphore)
-                        for tweet in tweets
+                        for tweet in tweets_to_process
                     ]
                     await asyncio.gather(*task_list)
 
-                    total_count += len(tweets)
+                    total_count += len(tweets_to_process)
 
                     # Check for more results
                     if not result.get("has_more", False):

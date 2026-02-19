@@ -48,6 +48,7 @@ bash energy-service/start-macos.sh
 ### 3. 配置参数
 
 配置文件：`config/base_config.py`
+环境变量文件：项目根目录 `.env`（会自动加载）
 
 常用项：
 
@@ -55,7 +56,7 @@ bash energy-service/start-macos.sh
 - `CRAWLER_TYPE = "search" | "detail" | "creator"`
 - `LOGIN_TYPE = "qrcode" | "cookie" | "phone"`
 - `ENERGY_SERVICE_ADDRESS = "localhost:50051"`
-- X 平台鉴权：`TWITTER_AUTH_TOKEN`、`TWITTER_CT0`
+- X 平台鉴权：`TWITTER_AUTH_TOKEN`、`TWITTER_CT0`（也支持 `TWITTER_COOKIE` 自动提取并透传全量 Cookie）
 
 ### 4. 运行 CLI
 

@@ -897,7 +897,18 @@ class TwitterEnergyAdapter:
             Dictionary of cookie name -> value pairs
         """
         cookies = self.browser.get_cookies(self.browser_id, self.TWITTER_BASE_URL)
-        return {c.name: c.value for c in cookies if domain in c.domain or not c.domain}
+        normalized_target = domain.strip().lstrip(".").lower()
+        result: Dict[str, str] = {}
+
+        for c in cookies:
+            cookie_domain = (c.domain or "").strip().lstrip(".").lower()
+            if not normalized_target or not cookie_domain:
+                result[c.name] = c.value
+                continue
+            if cookie_domain == normalized_target or cookie_domain.endswith("." + normalized_target):
+                result[c.name] = c.value
+
+        return result
 
     def get_all_cookies(self) -> List[Dict[str, Any]]:
         """
@@ -955,10 +966,57 @@ class TwitterEnergyAdapter:
             True if successful
         """
         cookies = [
-            {"name": name, "value": value, "domain": domain}
+            {
+                "name": name,
+                "value": value,
+                "domain": domain,
+                "path": "/",
+                "secure": True,
+                "httpOnly": name == self.AUTH_COOKIE_NAME,
+            }
             for name, value in cookies_dict.items()
         ]
         return self.set_cookies(cookies, domain)
+
+    def set_cookies_via_js(self, cookies_dict: Dict[str, str], domain: str = "x.com") -> bool:
+        """
+        Set cookies via document.cookie in browser page context.
+
+        This is a practical fallback when service-side SetCookies is unavailable
+        or rejected by the embedded runtime.
+
+        Args:
+            cookies_dict: Dictionary of cookie name -> value
+            domain: Cookie domain (default x.com)
+
+        Returns:
+            True if JS execution succeeds
+        """
+        if not cookies_dict:
+            return False
+
+        cookie_items = [
+            {"name": name, "value": value}
+            for name, value in cookies_dict.items()
+            if name
+        ]
+        if not cookie_items:
+            return False
+
+        script = f"""
+        (function() {{
+            const items = {json.dumps(cookie_items, ensure_ascii=False)};
+            const domain = {json.dumps(domain)};
+            for (const item of items) {{
+                const cookieStr = item.name + "=" + item.value + "; path=/; domain=" + domain + "; secure";
+                document.cookie = cookieStr;
+            }}
+            return true;
+        }})();
+        """
+
+        result = self._execute_js_raw(script)
+        return bool(result and result.lower() == "true")
 
     # ==================== Authentication ====================
 
@@ -1006,13 +1064,20 @@ class TwitterEnergyAdapter:
             script = """
             (function() {
                 // Check if we're on login page
-                if (window.location.pathname === '/login') {
+                const path = window.location.pathname || '';
+                if (
+                    path === '/login' ||
+                    path.startsWith('/i/flow/login') ||
+                    path.startsWith('/i/flow/signup')
+                ) {
                     return false;
                 }
 
                 // Check for logged-in user indicators
-                const profileLink = document.querySelector('a[href*="/home"]');
-                if (profileLink) {
+                const homeLink = document.querySelector('a[href="/home"], a[data-testid="AppTabBar_Home_Link"]');
+                const postButton = document.querySelector('[data-testid="SideNav_NewTweet_Button"]');
+                const accountSwitcher = document.querySelector('[data-testid="SideNav_AccountSwitcher_Button"]');
+                if (homeLink || postButton || accountSwitcher) {
                     return true;
                 }
 

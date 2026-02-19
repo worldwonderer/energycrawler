@@ -2,6 +2,7 @@ package browser
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,12 +23,12 @@ type Cookie struct {
 
 // CookieRequest tracks a cookie request
 type CookieRequest struct {
-	ID       int32
-	URL      string
-	Done     chan struct{}
-	Cookies  []Cookie
-	Error    error
-	mu       sync.RWMutex
+	ID      int32
+	URL     string
+	Done    chan struct{}
+	Cookies []Cookie
+	Error   error
+	mu      sync.RWMutex
 }
 
 // GetCookies retrieves cookies from a browser instance
@@ -51,10 +52,10 @@ func (m *Manager) GetCookies(id string, url string) ([]Cookie, error) {
 
 	// Create a request tracker
 	req := &CookieRequest{
-		ID:       1,
-		URL:      url,
-		Done:     make(chan struct{}),
-		Cookies:  []Cookie{},
+		ID:      1,
+		URL:     url,
+		Done:    make(chan struct{}),
+		Cookies: []Cookie{},
 	}
 
 	// Get window info to access chromium
@@ -106,28 +107,53 @@ func (m *Manager) SetCookies(id string, cookies []Cookie) error {
 		return fmt.Errorf("chromium not available: %s", id)
 	}
 
-	// Set each cookie using the Chromium.SetCookie method
-	for _, c := range cookies {
-		now := time.Now()
-		chromium.SetCookie(
-			"https://"+c.Domain,                   // URL
-			c.Name,                                // Name
-			c.Value,                               // Value
-			c.Domain,                              // Domain
-			c.Path,                                // Path
-			c.Secure,                              // Secure
-			c.HttpOnly,                            // HttpOnly
-			false,                                 // Session
-			now,                                   // Creation
-			now,                                   // Last Access
-			now.Add(365*24*time.Hour),             // Expires
-			consts.Ccss_CEF_COOKIE_SAME_SITE_UNSPECIFIED, // SameSite
-			consts.CEF_COOKIE_PRIORITY_MEDIUM,            // Priority
-			false,                                 // FromStore
-			0,                                     // ID
-		)
-	}
+	var setErr error
+	cef.QueueSyncCall(func(_ int) {
+		// Set each cookie on the UI thread.
+		// CEF expects a valid URL host (without leading dot), while cookie Domain
+		// may legitimately start with ".".
+		for i, c := range cookies {
+			domain := strings.TrimSpace(c.Domain)
+			if domain == "" {
+				setErr = fmt.Errorf("cookie domain is required for cookie %q", c.Name)
+				return
+			}
+			host := strings.TrimPrefix(domain, ".")
+			if host == "" {
+				setErr = fmt.Errorf("invalid cookie domain %q for cookie %q", c.Domain, c.Name)
+				return
+			}
+			path := strings.TrimSpace(c.Path)
+			if path == "" {
+				path = "/"
+			}
+			cookieURL := "https://" + host + "/"
+			now := time.Now()
+			chromium.SetCookie(
+				cookieURL,                 // URL
+				c.Name,                    // Name
+				c.Value,                   // Value
+				domain,                    // Domain
+				path,                      // Path
+				c.Secure,                  // Secure
+				c.HttpOnly,                // HttpOnly
+				true,                      // Has Expires
+				now,                       // Creation
+				now,                       // Last Access
+				now.Add(365*24*time.Hour), // Expires
+				consts.Ccss_CEF_COOKIE_SAME_SITE_UNSPECIFIED, // SameSite
+				consts.CEF_COOKIE_PRIORITY_MEDIUM,            // Priority
+				true,                                         // SetImmediately
+				int32(i+1),                                   // ID
+			)
+		}
 
+		// Force write-through to avoid races where immediate read misses new cookies.
+		chromium.FlushCookieStore(true)
+	})
+	if setErr != nil {
+		return setErr
+	}
 	return nil
 }
 

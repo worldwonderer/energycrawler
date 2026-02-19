@@ -42,6 +42,20 @@ def _cookies_to_dict(cookies) -> dict[str, str]:
     return {c.name: c.value for c in cookies}
 
 
+def _parse_cookie_header(cookie_header: str) -> dict[str, str]:
+    cookie_dict: dict[str, str] = {}
+    for item in cookie_header.split(";"):
+        item = item.strip()
+        if not item or "=" not in item:
+            continue
+        key, value = item.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if key:
+            cookie_dict[key] = value
+    return cookie_dict
+
+
 def _is_xhs_logged(cookies: dict[str, str]) -> bool:
     # Deprecated in favor of API-level login check via XiaoHongShuClient.pong().
     return False
@@ -82,13 +96,29 @@ def probe_service(host: str, port: int) -> None:
         client.disconnect()
 
 
-async def ensure_login(host: str, port: int, spec: LoginSpec) -> None:
+async def ensure_login(host: str, port: int, spec: LoginSpec, allow_interactive_x_login: bool = False) -> None:
     if spec.platform == "x":
         auth_token = os.getenv("TWITTER_AUTH_TOKEN", "").strip()
         ct0 = os.getenv("TWITTER_CT0", "").strip()
         if auth_token and ct0:
             print("[x] detected TWITTER_AUTH_TOKEN/TWITTER_CT0 in env, skip interactive login")
             return
+        cookie_header = os.getenv("TWITTER_COOKIE", "").strip()
+        if cookie_header:
+            cookie_dict = _parse_cookie_header(cookie_header)
+            auth_token = cookie_dict.get("auth_token", "").strip()
+            ct0 = cookie_dict.get("ct0", "").strip()
+            if auth_token and ct0:
+                os.environ["TWITTER_AUTH_TOKEN"] = auth_token
+                os.environ["TWITTER_CT0"] = ct0
+                print("[x] parsed TWITTER_COOKIE and extracted auth_token/ct0, skip interactive login")
+                return
+        if not allow_interactive_x_login:
+            raise RuntimeError(
+                "[x] Embedded login may be blocked by Google/X policies. "
+                "Please set TWITTER_AUTH_TOKEN + TWITTER_CT0 (or TWITTER_COOKIE), "
+                "or rerun with --enable-interactive-x-login."
+            )
 
     client = BrowserClient(host, port)
     client.connect()
@@ -169,8 +199,11 @@ async def run_platform_crawl(platform: str, keyword: str, max_count: int) -> Non
     config.CRAWLER_MAX_SLEEP_SEC = max(config.CRAWLER_MAX_SLEEP_SEC, 10)
     config.SAVE_DATA_OPTION = "json"
     if platform == "x":
+        env_cookie_header = os.getenv("TWITTER_COOKIE", "").strip()
         env_auth_token = os.getenv("TWITTER_AUTH_TOKEN", "").strip()
         env_ct0 = os.getenv("TWITTER_CT0", "").strip()
+        if env_cookie_header:
+            config.TWITTER_COOKIE = env_cookie_header
         if env_auth_token:
             config.TWITTER_AUTH_TOKEN = env_auth_token
         if env_ct0:
@@ -189,6 +222,11 @@ async def main() -> None:
     parser.add_argument("--x-keyword", default="tesla")
     parser.add_argument("--max-count", type=int, default=3)
     parser.add_argument("--skip-crawl", action="store_true", help="Only do login checks")
+    parser.add_argument(
+        "--enable-interactive-x-login",
+        action="store_true",
+        help="Allow interactive X login in embedded browser (may be blocked by Google/X).",
+    )
     args = parser.parse_args()
 
     print(f"Checking Energy service at {args.host}:{args.port} ...")
@@ -196,7 +234,12 @@ async def main() -> None:
     print("Energy service is available.")
 
     for spec in LOGIN_SPECS:
-        await ensure_login(args.host, args.port, spec)
+        await ensure_login(
+            args.host,
+            args.port,
+            spec,
+            allow_interactive_x_login=args.enable_interactive_x_login,
+        )
 
     if args.skip_crawl:
         print("Login checks completed.")

@@ -18,6 +18,37 @@
 # 使用本代码即表示您同意遵守上述原则和LICENSE中的所有条款。
 
 import os
+from pathlib import Path
+
+try:
+    from dotenv import load_dotenv
+except Exception:  # pragma: no cover - fallback when dotenv is unavailable
+    load_dotenv = None
+
+
+def _load_project_env() -> None:
+    """Load .env from project root if python-dotenv is available."""
+    if load_dotenv is None:
+        return
+    project_root = Path(__file__).resolve().parents[1]
+    load_dotenv(project_root / ".env", override=False)
+
+
+def _parse_cookie_header(cookie_header: str) -> dict[str, str]:
+    cookie_dict: dict[str, str] = {}
+    for item in cookie_header.split(";"):
+        item = item.strip()
+        if not item or "=" not in item:
+            continue
+        key, value = item.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if key:
+            cookie_dict[key] = value
+    return cookie_dict
+
+
+_load_project_env()
 
 # Basic configuration
 PLATFORM = "xhs"  # Platform, xhs | x
@@ -117,11 +148,20 @@ CRAWLER_MAX_SLEEP_SEC = 10
 # =================================== Twitter/X.com Configuration ===================================
 
 # Twitter auth_token cookie (required for crawling)
-# Get this from browser cookies after logging into x.com
-TWITTER_AUTH_TOKEN = os.getenv("TWITTER_AUTH_TOKEN", "")
+# Priority: TWITTER_AUTH_TOKEN > TWITTER_COOKIE(auth_token=...)
+TWITTER_COOKIE = os.getenv("TWITTER_COOKIE", "").strip()
+_twitter_cookie_dict = _parse_cookie_header(TWITTER_COOKIE)
+_twitter_auth_token = os.getenv("TWITTER_AUTH_TOKEN", "").strip()
+if not _twitter_auth_token:
+    _twitter_auth_token = _twitter_cookie_dict.get("auth_token", "").strip()
+TWITTER_AUTH_TOKEN = _twitter_auth_token
 
-# Twitter ct0 cookie (optional, will be auto-fetched if not provided)
-TWITTER_CT0 = os.getenv("TWITTER_CT0", "")
+# Twitter ct0 cookie (required for API auth)
+# Priority: TWITTER_CT0 > TWITTER_COOKIE(ct0=...)
+_twitter_ct0 = os.getenv("TWITTER_CT0", "").strip()
+if not _twitter_ct0:
+    _twitter_ct0 = _twitter_cookie_dict.get("ct0", "").strip()
+TWITTER_CT0 = _twitter_ct0
 
 # Enable browser-based login (QR code or cookie verification)
 TWITTER_ENABLE_LOGIN = os.getenv("TWITTER_ENABLE_LOGIN", "false").lower() == "true"

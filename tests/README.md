@@ -110,6 +110,34 @@ export TWITTER_CT0="your_ct0"
 .venv/bin/python tests/e2e/run_xhs_x_crawl_flow.py
 ```
 
+You can also provide a raw Cookie header and let runner auto-extract:
+
+```bash
+export TWITTER_COOKIE="auth_token=...; ct0=...;"
+.venv/bin/python tests/e2e/run_xhs_x_crawl_flow.py
+```
+
+When `TWITTER_COOKIE` is set, full cookie values are:
+- passed through to Twitter API requests
+- injected into Energy browser session before crawling
+(not only `auth_token`/`ct0`).
+
+You can put the same variables in project-root `.env` (auto loaded by config):
+
+```bash
+TWITTER_AUTH_TOKEN=...
+TWITTER_CT0=...
+# or
+TWITTER_COOKIE="auth_token=...; ct0=...;"
+```
+
+By default, interactive X login is disabled to avoid embedded-browser login restrictions.
+If you still want to try it, enable explicitly:
+
+```bash
+.venv/bin/python tests/e2e/run_xhs_x_crawl_flow.py --enable-interactive-x-login
+```
+
 ### Run All Tests
 
 ```bash
