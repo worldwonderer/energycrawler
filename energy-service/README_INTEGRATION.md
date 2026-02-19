@@ -2,7 +2,7 @@
 
 ## 概述
 
-Energy 是一个基于 Go + CEF (Chromium Embedded Framework) 的浏览器自动化框架，可以替代 Playwright 用于小红书等平台的签名生成和 Cookie 获取。
+Energy 是一个基于 Go + CEF (Chromium Embedded Framework) 的浏览器自动化框架，可用于小红书等平台的签名生成和 Cookie 获取。
 
 ## 启动 Energy 服务
 
@@ -11,6 +11,13 @@ Energy 是一个基于 Go + CEF (Chromium Embedded Framework) 的浏览器自动
 ```bash
 cd /Users/pite/EnergyCrawler/energy-service
 bash start-macos.sh
+```
+
+若本机 `8001` 已被 HTTP 代理等程序占用，可显式指定调试端口：
+
+```bash
+cd /Users/pite/EnergyCrawler/energy-service
+ENERGY_DEBUG_PORT=9222 bash start-macos.sh
 ```
 
 **重要**: 必须使用 `start-macos.sh` 脚本启动，而不是直接运行二进制文件。该脚本会：

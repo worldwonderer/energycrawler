@@ -20,7 +20,7 @@
 XiaoHongShu Crawler - Energy Browser Only
 
 This module provides a pure Energy-based crawler for Xiaohongshu (XHS) platform.
-No Playwright dependency required.
+No legacy browser-driver dependency required.
 
 Usage:
     This module is deprecated. Use energy_crawler.py instead.
@@ -58,7 +58,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
     XiaoHongShu Crawler - Energy Browser Only
 
     This crawler uses the Energy browser service for all operations.
-    No Playwright dependency is required.
+    No legacy browser-driver dependency is required.
 
     For login functionality, cookies must be set via config.COOKIES or
     by running the Energy browser service with an already logged-in session.
@@ -175,9 +175,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
     async def search(self) -> None:
         """搜索笔记并获取评论"""
         utils.logger.info("[XiaoHongShuCrawler.search] Begin search XHS keywords")
-        xhs_limit_count = 20
-        if config.CRAWLER_MAX_NOTES_COUNT < xhs_limit_count:
-            config.CRAWLER_MAX_NOTES_COUNT = xhs_limit_count
+        target_note_count = max(1, int(config.CRAWLER_MAX_NOTES_COUNT))
         start_page = config.START_PAGE
 
         for keyword in config.KEYWORDS.split(","):
@@ -185,8 +183,9 @@ class XiaoHongShuCrawler(AbstractCrawler):
             utils.logger.info(f"[XiaoHongShuCrawler.search] Current search keyword: {keyword}")
             page = 1
             search_id = get_search_id()
+            fetched_note_count = 0
 
-            while (page - start_page + 1) * xhs_limit_count <= config.CRAWLER_MAX_NOTES_COUNT:
+            while fetched_note_count < target_note_count:
                 if page < start_page:
                     utils.logger.info(f"[XiaoHongShuCrawler.search] Skip page {page}")
                     page += 1
@@ -204,11 +203,24 @@ class XiaoHongShuCrawler(AbstractCrawler):
                         sort=(SearchSortType(config.SORT_TYPE) if config.SORT_TYPE != "" else SearchSortType.GENERAL),
                     )
 
-                    utils.logger.info(f"[XiaoHongShuCrawler.search] Search notes count: {len(notes_res.get('items', []))}")
-
-                    if not notes_res or not notes_res.get("has_more", False):
+                    if not notes_res:
                         utils.logger.info("[XiaoHongShuCrawler.search] No more content!")
                         break
+
+                    raw_items = notes_res.get("items", [])
+                    valid_items = [item for item in raw_items if item.get("model_type") not in ("rec_query", "hot_query")]
+                    remaining = target_note_count - fetched_note_count
+                    selected_items = valid_items[:remaining]
+                    utils.logger.info(
+                        f"[XiaoHongShuCrawler.search] Search notes count: {len(raw_items)}, "
+                        f"selected: {len(selected_items)}, fetched/target: {fetched_note_count}/{target_note_count}"
+                    )
+                    if not selected_items:
+                        utils.logger.info("[XiaoHongShuCrawler.search] No valid notes in current page")
+                        if not notes_res.get("has_more", False):
+                            break
+                        page += 1
+                        continue
 
                     semaphore = asyncio.Semaphore(config.MAX_CONCURRENCY_NUM)
                     task_list = [
@@ -217,7 +229,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
                             xsec_source=post_item.get("xsec_source"),
                             xsec_token=post_item.get("xsec_token"),
                             semaphore=semaphore,
-                        ) for post_item in notes_res.get("items", []) if post_item.get("model_type") not in ("rec_query", "hot_query")
+                        ) for post_item in selected_items
                     ]
                     note_details = await asyncio.gather(*task_list)
 
@@ -227,9 +239,12 @@ class XiaoHongShuCrawler(AbstractCrawler):
                             await self.get_notice_media(note_detail)
                             note_ids.append(note_detail.get("note_id"))
                             xsec_tokens.append(note_detail.get("xsec_token"))
+                    fetched_note_count += len(note_ids)
 
                     page += 1
                     await self.batch_get_note_comments(note_ids, xsec_tokens)
+                    if fetched_note_count >= target_note_count or not notes_res.get("has_more", False):
+                        break
                     await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
 
                 except DataFetchError:
@@ -344,6 +359,9 @@ class XiaoHongShuCrawler(AbstractCrawler):
             except Exception as e:
                 utils.logger.error(f"[XiaoHongShuCrawler.get_note_detail_async_task] Unexpected error: {e}")
                 return None
+            finally:
+                # Keep low request rate for account safety.
+                await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
 
     async def batch_get_note_comments(self, note_ids: List[str], xsec_tokens: List[str]) -> None:
         """批量获取笔记评论"""
@@ -362,27 +380,37 @@ class XiaoHongShuCrawler(AbstractCrawler):
         """获取单篇笔记的评论"""
         async with semaphore:
             try:
+                max_comments = max(0, int(config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES))
+                if max_comments == 0:
+                    return
                 cursor = ""
+                fetched_count = 0
                 while True:
                     comments_res = await self.xhs_client.get_note_comments(
                         note_id=note_id,
                         xsec_token=xsec_token,
                         cursor=cursor,
                     )
-                    if not comments_res or not comments_res.get("has_more", False):
+                    if not comments_res:
                         break
-                    cursor = comments_res.get("cursor", "")
                     comments = comments_res.get("comments", [])
                     if not comments:
                         break
-                    for comment in comments:
-                        await xhs_store.update_xhs_note_comment(note_id=note_id, comment=comment)
+                    remaining = max_comments - fetched_count
+                    comments_to_store = comments[:remaining]
+                    for comment in comments_to_store:
+                        await xhs_store.update_xhs_note_comment(note_id=note_id, comment_item=comment)
+                    fetched_count += len(comments_to_store)
 
                     if config.ENABLE_GET_SUB_COMMENTS:
-                        await self.get_sub_comments(comments, note_id, xsec_token)
+                        await self.get_sub_comments(comments_to_store, note_id, xsec_token)
 
-                    if len(comments) < config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES:
+                    if fetched_count >= max_comments or not comments_res.get("has_more", False):
                         break
+                    cursor = comments_res.get("cursor", "")
+                    if not cursor:
+                        break
+                    await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
             except DataFetchError as ex:
                 utils.logger.error(f"[XiaoHongShuCrawler.get_note_comments] Get comments error: {ex}")
 
@@ -457,12 +485,12 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 video_num += 1
                 await xhs_store.update_xhs_note_video(note_id, content, extension_file_name)
 
-    async def launch_browser(self, chromium, playwright_proxy, user_agent, headless=True):
+    async def launch_browser(self, chromium, browser_proxy, user_agent, headless=True):
         """
-        不再需要 - Energy 模式不使用 Playwright
+        不再需要 - Energy 模式不使用旧浏览器驱动模式
         保留此方法以满足 AbstractCrawler 接口要求
         """
-        raise NotImplementedError("Playwright is not supported. Use Energy browser mode instead.")
+        raise NotImplementedError("Legacy browser mode is not supported. Use Energy browser mode instead.")
 
     async def close(self) -> None:
         """清理资源"""

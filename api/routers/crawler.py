@@ -18,41 +18,41 @@
 
 from fastapi import APIRouter, HTTPException
 
-from ..schemas import CrawlerStartRequest, CrawlerStatusResponse
+from ..schemas import CrawlerStartRequest, CrawlerStartResponse, CrawlerStatusResponse
 from ..services import crawler_manager
 
 router = APIRouter(prefix="/crawler", tags=["crawler"])
 
 
-@router.post("/start")
+@router.post("/start", response_model=CrawlerStartResponse)
 async def start_crawler(request: CrawlerStartRequest):
-    """Start crawler task"""
-    success = await crawler_manager.start(request)
-    if not success:
-        # Handle concurrent/duplicate requests: if process is already running, return 400 instead of 500
-        if crawler_manager.process and crawler_manager.process.poll() is None:
-            raise HTTPException(status_code=400, detail="Crawler is already running")
-        raise HTTPException(status_code=500, detail="Failed to start crawler")
+    """Enqueue crawler task"""
+    result = await crawler_manager.start(request)
+    if not result.get("accepted"):
+        raise HTTPException(status_code=500, detail="Failed to enqueue crawler task")
 
-    return {"status": "ok", "message": "Crawler started successfully"}
+    return {
+        "status": "ok",
+        "message": "Crawler task accepted",
+        "task_id": result["task_id"],
+        "queued_tasks": result["queued_tasks"],
+        "running_workers": result["running_workers"],
+    }
 
 
 @router.post("/stop")
 async def stop_crawler():
-    """Stop crawler task"""
+    """Stop all running crawler tasks and clear queue"""
     success = await crawler_manager.stop()
     if not success:
-        # Handle concurrent/duplicate requests: if process already exited/doesn't exist, return 400 instead of 500
-        if not crawler_manager.process or crawler_manager.process.poll() is not None:
-            raise HTTPException(status_code=400, detail="No crawler is running")
-        raise HTTPException(status_code=500, detail="Failed to stop crawler")
+        raise HTTPException(status_code=400, detail="No crawler task is running")
 
-    return {"status": "ok", "message": "Crawler stopped successfully"}
+    return {"status": "ok", "message": "Crawler cluster stopped successfully"}
 
 
 @router.get("/status", response_model=CrawlerStatusResponse)
 async def get_crawler_status():
-    """Get crawler status"""
+    """Get crawler cluster status"""
     return crawler_manager.get_status()
 
 
@@ -61,3 +61,9 @@ async def get_logs(limit: int = 100):
     """Get recent logs"""
     logs = crawler_manager.logs[-limit:] if limit > 0 else crawler_manager.logs
     return {"logs": [log.model_dump() for log in logs]}
+
+
+@router.get("/cluster")
+async def get_cluster_status():
+    """Get detailed cluster runtime snapshot"""
+    return crawler_manager.get_cluster_status()

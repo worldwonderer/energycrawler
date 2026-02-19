@@ -9,6 +9,7 @@ cd "$SCRIPT_DIR"
 
 APP_NAME="energy-service"
 APP_BUNDLE="${APP_NAME}.app"
+PLIST_PATH="${APP_BUNDLE}/Contents/Info.plist"
 
 # Check if binary exists
 if [ ! -f "$APP_NAME" ]; then
@@ -36,6 +37,18 @@ if [ ! -d "$APP_BUNDLE" ]; then
     exit 1
 fi
 
+# Inject required privacy usage descriptions to prevent TCC crash on macOS.
+# Without NSBluetoothAlwaysUsageDescription, Chromium may abort when touching
+# Bluetooth-related APIs during page/runtime initialization.
+if [ -f "$PLIST_PATH" ]; then
+    /usr/libexec/PlistBuddy -c "Add :NSBluetoothAlwaysUsageDescription string \"Energy service does not use Bluetooth directly; this key prevents macOS runtime crash triggered by embedded Chromium.\"" "$PLIST_PATH" 2>/dev/null || \
+    /usr/libexec/PlistBuddy -c "Set :NSBluetoothAlwaysUsageDescription \"Energy service does not use Bluetooth directly; this key prevents macOS runtime crash triggered by embedded Chromium.\"" "$PLIST_PATH"
+
+    # Add legacy key as compatibility fallback on older systems.
+    /usr/libexec/PlistBuddy -c "Add :NSBluetoothPeripheralUsageDescription string \"Energy service does not use Bluetooth directly; this key prevents macOS runtime crash triggered by embedded Chromium.\"" "$PLIST_PATH" 2>/dev/null || \
+    /usr/libexec/PlistBuddy -c "Set :NSBluetoothPeripheralUsageDescription \"Energy service does not use Bluetooth directly; this key prevents macOS runtime crash triggered by embedded Chromium.\"" "$PLIST_PATH"
+fi
+
 # Replace symlinks with actual files in Helper apps
 echo "Fixing Helper app symlinks..."
 for helper in "$APP_NAME Helper" "$APP_NAME Helper (GPU)" "$APP_NAME Helper (Renderer)" "$APP_NAME Helper (Plugin)"; do
@@ -55,7 +68,10 @@ codesign --force --deep --sign - "$APP_BUNDLE/Contents/Frameworks/$APP_NAME Help
 codesign --force --deep --sign - "$APP_BUNDLE" 2>/dev/null || true
 
 echo "Starting $APP_BUNDLE..."
-open "$APP_BUNDLE"
+if ! open -n "$APP_BUNDLE"; then
+    echo "Warning: 'open' failed (likely no GUI session). Falling back to direct binary launch."
+    nohup "$APP_BUNDLE/Contents/MacOS/$APP_NAME" >/tmp/energy-service.log 2>&1 &
+fi
 
 # Wait a moment and check if service is running
 sleep 3

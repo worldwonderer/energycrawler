@@ -57,7 +57,6 @@ import logging
 logger = logging.getLogger(__name__)
 
 import httpx
-from bs4 import BeautifulSoup
 from energy_client.browser_interface import BrowserInterface, Cookie, EnergyBrowserBackend
 
 
@@ -373,27 +372,6 @@ def parse_vk_bytes_from_html(html: str) -> List[int]:
     return list(base64.b64decode(content))
 
 
-def parse_vk_bytes(soup: BeautifulSoup) -> List[int]:
-    """
-    Parse verification key bytes from Twitter page.
-
-    Args:
-        soup: BeautifulSoup object of Twitter page
-
-    Returns:
-        List of verification key bytes
-
-    Raises:
-        Exception: If verification key cannot be found
-    """
-    el = soup.find("meta", {"name": "twitter-site-verification", "content": True})
-    el = str(el.get("content")) if el else None
-    if not el:
-        raise Exception("Couldn't get XClientTxId key bytes")
-
-    return list(base64.b64decode(bytes(el, "utf-8")))
-
-
 def parse_anim_arr_from_html(html: str, vk_bytes: List[int]) -> List[List[float]]:
     """
     Parse animation array from SVG elements in raw HTML.
@@ -430,31 +408,6 @@ def parse_anim_arr_from_html(html: str, vk_bytes: List[int]) -> List[List[float]
 
     idx = vk_bytes[5] % len(els)
     dat = els[idx][9:].split("C")  # Remove "M " prefix and split by "C"
-    arr = [list(map(float, re.sub(r"[^\d]+", " ", x).split())) for x in dat]
-    return arr
-
-
-def parse_anim_arr(soup: BeautifulSoup, vk_bytes: List[int]) -> List[List[float]]:
-    """
-    Parse animation array from SVG elements (BeautifulSoup version - fallback).
-
-    Args:
-        soup: BeautifulSoup object of Twitter page
-        vk_bytes: Verification key bytes
-
-    Returns:
-        List of animation frame arrays
-
-    Raises:
-        Exception: If animation array cannot be found
-    """
-    els = list(soup.select("svg[id^='loading-x-anim'] g:first-child path:nth-child(2)"))
-    els = [str(x.get("d") or "").strip() for x in els]
-    if not els:
-        raise Exception("Couldn't get XClientTxId animation array")
-
-    idx = vk_bytes[5] % len(els)
-    dat = els[idx][9:].split("C")
     arr = [list(map(float, re.sub(r"[^\d]+", " ", x).split())) for x in dat]
     return arr
 
@@ -761,11 +714,13 @@ class TwitterEnergyAdapter:
         ondemand_url = _get_ondemand_url(html)
 
         if not ondemand_url:
-            # Try to find in script tags as fallback
-            soup = BeautifulSoup(html, "html.parser")
-            scripts = soup.find_all("script", src=True)
-            for script in scripts:
-                src = script.get("src", "")
+            # Fallback: scan script src attributes directly from HTML.
+            script_srcs = re.findall(
+                r"<script[^>]*src=['\"]([^'\"]+)['\"][^>]*>",
+                html,
+                re.IGNORECASE,
+            )
+            for src in script_srcs:
                 if "ondemand.s." in src and src.endswith(".js"):
                     ondemand_url = src
                     break

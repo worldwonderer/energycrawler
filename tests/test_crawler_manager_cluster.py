@@ -1,0 +1,132 @@
+# -*- coding: utf-8 -*-
+"""
+Unit tests for simplified crawler cluster manager.
+"""
+
+from collections import deque
+
+import pytest
+
+from api.schemas import CrawlerStartRequest
+from api.services.crawler_manager import CrawlerManager
+
+
+class _FakeStdout:
+    def __init__(self):
+        self._lines = deque()
+
+    def readline(self) -> str:
+        if self._lines:
+            return self._lines.popleft()
+        return ""
+
+    def read(self) -> str:
+        return ""
+
+
+class _FakeProcess:
+    def __init__(self):
+        self.returncode = None
+        self.stdout = _FakeStdout()
+
+    def poll(self):
+        return self.returncode
+
+    def send_signal(self, _signal):
+        self.returncode = 0
+
+    def kill(self):
+        self.returncode = -9
+
+
+class _FakeProcessFactory:
+    def __init__(self):
+        self.processes = []
+
+    def __call__(self, _cmd, **_kwargs):
+        process = _FakeProcess()
+        self.processes.append(process)
+        return process
+
+
+def _make_request() -> CrawlerStartRequest:
+    return CrawlerStartRequest(
+        platform="xhs",
+        crawler_type="search",
+        login_type="qrcode",
+        keywords="test keyword",
+        save_option="json",
+    )
+
+
+@pytest.mark.asyncio
+async def test_start_dispatches_to_worker_pool_and_queues_excess_tasks():
+    factory = _FakeProcessFactory()
+    manager = CrawlerManager(
+        max_workers=2,
+        process_factory=factory,
+        enable_output_reader=False,
+    )
+
+    request = _make_request()
+    await manager.start(request)
+    await manager.start(request)
+    third = await manager.start(request)
+
+    status = manager.get_status()
+    assert third["accepted"] is True
+    assert status["status"] == "running"
+    assert status["running_workers"] == 2
+    assert status["queued_tasks"] == 1
+    assert status["total_workers"] == 2
+    assert len(status["active_task_ids"]) == 2
+    assert len(status["pending_task_ids"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_stop_terminates_running_workers_and_clears_queue():
+    factory = _FakeProcessFactory()
+    manager = CrawlerManager(
+        max_workers=2,
+        process_factory=factory,
+        enable_output_reader=False,
+    )
+
+    request = _make_request()
+    await manager.start(request)
+    await manager.start(request)
+    await manager.start(request)
+
+    assert await manager.stop() is True
+    assert await manager.stop() is False
+
+    status = manager.get_status()
+    assert status["status"] == "idle"
+    assert status["running_workers"] == 0
+    assert status["queued_tasks"] == 0
+    assert all(process.returncode is not None for process in factory.processes)
+
+
+def test_build_command_keeps_existing_cli_contract():
+    manager = CrawlerManager(max_workers=1, enable_output_reader=False)
+    request = CrawlerStartRequest(
+        platform="x",
+        crawler_type="detail",
+        login_type="cookie",
+        specified_ids="123,456",
+        start_page=3,
+        enable_comments=False,
+        enable_sub_comments=True,
+        save_option="json",
+        headless=True,
+    )
+
+    cmd = manager._build_command(request)
+    assert cmd[:4] == ["uv", "run", "python", "main.py"]
+    assert "--platform" in cmd and "x" in cmd
+    assert "--type" in cmd and "detail" in cmd
+    assert "--specified_id" in cmd and "123,456" in cmd
+    assert "--start" in cmd and "3" in cmd
+    assert "--get_comment" in cmd and "false" in cmd
+    assert "--get_sub_comment" in cmd and "true" in cmd
+    assert "--headless" in cmd and "true" in cmd

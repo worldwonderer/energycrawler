@@ -21,7 +21,7 @@
 Base Crawler Classes
 
 This module defines abstract base classes for crawlers.
-No Playwright dependency is required - the platform-specific crawlers
+No external browser-driver dependency is required - the platform-specific crawlers
 should use Energy browser service for browser automation.
 """
 
@@ -46,7 +46,7 @@ class AbstractCrawler(ABC):
         """
         pass
 
-    async def launch_browser(self, chromium: Any = None, playwright_proxy: Optional[Dict] = None, user_agent: Optional[str] = None, headless: bool = True) -> Any:
+    async def launch_browser(self, chromium: Any = None, browser_proxy: Optional[Dict] = None, user_agent: Optional[str] = None, headless: bool = True) -> Any:
         """
         Launch browser (deprecated - use Energy browser service instead)
 
@@ -54,27 +54,12 @@ class AbstractCrawler(ABC):
         Platform-specific crawlers should use the Energy browser service.
 
         :param chromium: chromium browser (deprecated)
-        :param playwright_proxy: playwright proxy (deprecated)
+        :param browser_proxy: browser proxy (deprecated)
         :param user_agent: user agent
         :param headless: headless mode
         :return: browser context (deprecated)
         """
-        raise NotImplementedError("Playwright is not supported. Use Energy browser service instead.")
-
-    async def launch_browser_with_cdp(self, playwright: Any = None, playwright_proxy: Optional[Dict] = None, user_agent: Optional[str] = None, headless: bool = True) -> Any:
-        """
-        Launch browser using CDP mode (deprecated - use Energy browser service instead)
-
-        This method is kept for backward compatibility but should not be used.
-        Platform-specific crawlers should use the Energy browser service.
-
-        :param playwright: playwright instance (deprecated)
-        :param playwright_proxy: playwright proxy configuration (deprecated)
-        :param user_agent: user agent
-        :param headless: headless mode
-        :return: browser context (deprecated)
-        """
-        raise NotImplementedError("CDP mode is not supported. Use Energy browser service instead.")
+        raise NotImplementedError("Legacy browser mode is not supported. Use Energy browser service instead.")
 
     async def close(self):
         """

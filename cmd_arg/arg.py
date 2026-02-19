@@ -198,7 +198,7 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
             str,
             typer.Option(
                 "--headless",
-                help="Whether to enable headless mode (applies to both Playwright and CDP), supports yes/true/t/y/1 or no/false/f/n/0",
+                help="Whether to enable headless mode for browser runtime, supports yes/true/t/y/1 or no/false/f/n/0",
                 rich_help_panel="Runtime Configuration",
                 show_default=True,
             ),
@@ -316,7 +316,6 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
         config.ENABLE_GET_COMMENTS = enable_comment
         config.ENABLE_GET_SUB_COMMENTS = enable_sub_comment
         config.HEADLESS = enable_headless
-        config.CDP_HEADLESS = enable_headless
         config.ENERGY_HEADLESS = enable_headless
         config.SAVE_DATA_OPTION = save_data_option.value
         config.COOKIES = cookies

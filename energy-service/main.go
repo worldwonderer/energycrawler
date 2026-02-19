@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -20,7 +21,8 @@ import (
 )
 
 const (
-	defaultPort = ":50051"
+	defaultPort            = ":50051"
+	defaultRemoteDebugPort = 0
 )
 
 func main() {
@@ -32,6 +34,8 @@ func main() {
 	app.SetUseMockKeyChain(true)
 	app.SetEnableGPU(false) // Disable GPU for headless/service use
 	app.SetNoSandbox(true)  // Disable sandbox for service context
+	remoteDebugPort := getEnvIntOrDefault("ENERGY_DEBUG_PORT", defaultRemoteDebugPort)
+	app.SetRemoteDebuggingPort(int32(remoteDebugPort))
 
 	// CRITICAL: Workaround for Fontations font rendering crash
 	// The Fontations backend (new in Chrome 136+) has a bug that causes SIGILL crashes
@@ -50,6 +54,7 @@ func main() {
 
 	log.Println("[Main] Energy Browser Service starting...")
 	log.Printf("[Main] ChromeVersion: %s", app.ChromeVersion())
+	log.Printf("[Main] RemoteDebuggingPort: %d", remoteDebugPort)
 
 	// Get the browser manager from the server
 	browserServer := server.NewBrowserServer()
@@ -194,6 +199,16 @@ func main() {
 func getEnvOrDefault(key, defaultVal string) string {
 	if val := os.Getenv(key); val != "" {
 		return val
+	}
+	return defaultVal
+}
+
+func getEnvIntOrDefault(key string, defaultVal int) int {
+	if val := os.Getenv(key); val != "" {
+		if parsed, err := strconv.Atoi(val); err == nil {
+			return parsed
+		}
+		log.Printf("[Config] Invalid %s=%q, fallback to %d", key, val, defaultVal)
 	}
 	return defaultVal
 }

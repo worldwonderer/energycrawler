@@ -28,7 +28,12 @@ import asyncio
 import json
 from typing import Dict, List, Optional, Any
 
-from curl_cffi import requests as curl_requests
+try:
+    from curl_cffi import requests as curl_requests
+    _HAS_CURL_CFFI = True
+except ImportError:
+    import requests as curl_requests
+    _HAS_CURL_CFFI = False
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_not_exception_type
 
 from tools import utils
@@ -91,11 +96,25 @@ class TwitterClient:
         self._user_agent: Optional[str] = None
         self._initialized = False
 
-        # Create curl_cffi session with Chrome impersonation
-        self._session = curl_requests.Session(
-            impersonate="chrome110",
-            proxies=proxies,
-        )
+        if _HAS_CURL_CFFI:
+            # Use curl_cffi with browser impersonation when available.
+            self._session = curl_requests.Session(
+                impersonate="chrome110",
+                proxies=proxies,
+            )
+        else:
+            # Fallback to requests to keep module import/runtime available without curl_cffi.
+            self._session = curl_requests.Session()
+            if proxies:
+                normalized = {}
+                for key, value in proxies.items():
+                    if not value:
+                        continue
+                    stripped_key = key.replace("://", "")
+                    normalized[stripped_key] = value
+                    normalized[f"{stripped_key}://"] = value
+                self._session.proxies.update(normalized)
+            utils.logger.warning("[TwitterClient] curl_cffi not installed, using requests fallback session.")
 
     async def initialize(self) -> None:
         """

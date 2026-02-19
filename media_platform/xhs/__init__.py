@@ -23,7 +23,7 @@ XiaoHongShu (XHS) Platform Package
 This package provides crawlers for the Xiaohongshu (Little Red Book) platform.
 It uses the Energy browser service for browser automation and signature generation.
 
-No Playwright dependency is required.
+No legacy browser-driver dependency is required.
 """
 
 # Import the Energy-based crawler

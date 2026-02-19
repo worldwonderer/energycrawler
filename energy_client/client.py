@@ -48,7 +48,12 @@ class BrowserClient:
 
     def connect(self) -> None:
         """Establish connection to the Energy service."""
-        self.channel = grpc.insecure_channel(f'{self.host}:{self.port}')
+        # Disable HTTP proxy for gRPC channel to avoid localhost requests
+        # being hijacked by system proxy (e.g. 127.0.0.1:8001).
+        self.channel = grpc.insecure_channel(
+            f'{self.host}:{self.port}',
+            options=[('grpc.enable_http_proxy', 0)],
+        )
         self.stub = browser_pb2_grpc.BrowserServiceStub(self.channel)
 
     def disconnect(self) -> None:

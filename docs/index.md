@@ -61,7 +61,6 @@ uv run uvicorn api.main:app --port 8080 --reload
 
 - [项目代码结构](项目代码结构.md)
 - [项目架构文档](项目架构文档.md)
-- [CDP 模式使用指南](CDP模式使用指南.md)
 - [手机号登录说明](手机号登录说明.md)
 
 ## 免责声明

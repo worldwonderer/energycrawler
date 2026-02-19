@@ -847,7 +847,6 @@ dependencies = [
     { name = "pandas" },
     { name = "parsel" },
     { name = "pillow" },
-    { name = "playwright" },
     { name = "pre-commit" },
     { name = "pydantic" },
     { name = "pyexecjs" },
@@ -884,7 +883,6 @@ requires-dist = [
     { name = "pandas", specifier = "==2.2.3" },
     { name = "parsel", specifier = "==1.9.1" },
     { name = "pillow", specifier = "==9.5.0" },
-    { name = "playwright", specifier = "==1.45.0" },
     { name = "pre-commit", specifier = ">=3.5.0" },
     { name = "pydantic", specifier = "==2.5.2" },
     { name = "pyexecjs", specifier = "==1.5.1" },
@@ -1108,24 +1106,6 @@ wheels = [
 ]
 
 [[package]]
-name = "playwright"
-version = "1.45.0"
-source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
-dependencies = [
-    { name = "greenlet" },
-    { name = "pyee" },
-]
-wheels = [
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/99/ee/5ffdf7557b601a00fb4e0cc29b140cefc584e8d394ea21cc3a4eb05b4d45/playwright-1.45.0-py3-none-macosx_10_13_x86_64.whl", hash = "sha256:7d49aee5907d8e72060f04bc299cb6851c2dc44cb227540ade89d7aa529e907a", size = 34747285 },
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/f4/4e/d7df2eb27e2f228ec5fb2be453d3c780001ab9b3bd0f7ec5b6568adfe46e/playwright-1.45.0-py3-none-macosx_11_0_arm64.whl", hash = "sha256:210c9f848820f58b5b5ed48047748620b780ca3acc3e2b7560dafb2bfdd6d90a", size = 33064579 },
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/f0/4f/2f364f0586d1c0e0b82ee1118505fc5a495f2b385e34575967b8a5fc8302/playwright-1.45.0-py3-none-macosx_11_0_universal2.whl", hash = "sha256:13b5398831f5499580e819ddc996633446a93bf88029e89451e51da188e16ae3", size = 34747281 },
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/a4/3e/d68323360efc63c9565f8f9bc84d1074bb2d4726ec5bb45bd8c9fb72fe1b/playwright-1.45.0-py3-none-manylinux1_x86_64.whl", hash = "sha256:0ba5a39f25fb9b9cf1bd48678f44536a29f6d83376329de2dee1567dac220afe", size = 37861759 },
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/3a/b8/329494128bc9c90ad4a705e11e33bc1d90e79faf90ee27673c568ad0c8ba/playwright-1.45.0-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:b09fa76614ba2926d45a4c0581f710c13652d5e32290ba6a1490fbafff7f0be8", size = 37605929 },
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/a5/73/cde84614e51de244fe0cd1d0be7edb4cdedee7d7306f9646468807a22b6b/playwright-1.45.0-py3-none-win32.whl", hash = "sha256:97a7d53af89af54208b69c051046b462675fcf5b93f7fbfb7c0fa7f813424ee2", size = 29692683 },
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/87/0f/c8dcadb2f0dcfdab6052d5ecf57ccf19b439c0adc29fc510ed0830349345/playwright-1.45.0-py3-none-win_amd64.whl", hash = "sha256:701db496928429aec103739e48e3110806bd5cf49456cc95b89f28e1abda71da", size = 29692683 },
-]
-
-[[package]]
 name = "pluggy"
 version = "1.6.0"
 source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
@@ -1208,18 +1188,6 @@ wheels = [
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/8c/80/b7678c547b947cec35c136d88baf315fa6837500d9f8ce7353347f50a521/pydantic_core-2.14.5-cp312-none-win32.whl", hash = "sha256:699156034181e2ce106c89ddb4b6504c30db8caa86e0c30de47b3e0654543260", size = 1741746 },
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/60/5a/3161e1a1c138407cd2037b12ecdbe29f4890ccda1c0a0be69438c7d0065d/pydantic_core-2.14.5-cp312-none-win_amd64.whl", hash = "sha256:5baab5455c7a538ac7e8bf1feec4278a66436197592a9bed538160a2e7d11e36", size = 1874829 },
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/cf/b7/9bacf7f9439f785b2fe6d8199e28ad75ad25406f97f33c0186274a48a36d/pydantic_core-2.14.5-cp312-none-win_arm64.whl", hash = "sha256:e47e9a08bcc04d20975b6434cc50bf82665fbc751bcce739d04a3120428f3e27", size = 1844793 },
-]
-
-[[package]]
-name = "pyee"
-version = "11.1.0"
-source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
-dependencies = [
-    { name = "typing-extensions" },
-]
-sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/f7/22/b4c7f3d9579204a014c4eda0e019e6bfe56af52a96cacc82004b60eec079/pyee-11.1.0.tar.gz", hash = "sha256:b53af98f6990c810edd9b56b87791021a8f54fd13db4edd1142438d44ba2263f", size = 29806 }
-wheels = [
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/16/cc/5cea8a0a0d3deb90b5a0d39ad1a6a1ccaa40a9ea86d793eb8a49d32a6ed0/pyee-11.1.0-py3-none-any.whl", hash = "sha256:5d346a7d0f861a4b2e6c47960295bd895f816725b27d656181947346be98d7c1", size = 15263 },
 ]
 
 [[package]]

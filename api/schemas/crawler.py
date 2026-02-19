@@ -17,8 +17,8 @@
 # 使用本代码即表示您同意遵守上述原则和LICENSE中的所有条款。
 
 from enum import Enum
-from typing import Optional, Literal
-from pydantic import BaseModel
+from typing import List, Optional, Literal
+from pydantic import BaseModel, Field
 
 
 class PlatformEnum(str, Enum):
@@ -74,6 +74,20 @@ class CrawlerStatusResponse(BaseModel):
     crawler_type: Optional[str] = None
     started_at: Optional[str] = None
     error_message: Optional[str] = None
+    running_workers: int = 0
+    total_workers: int = 1
+    queued_tasks: int = 0
+    active_task_ids: List[str] = Field(default_factory=list)
+    pending_task_ids: List[str] = Field(default_factory=list)
+
+
+class CrawlerStartResponse(BaseModel):
+    """Crawler start response"""
+    status: Literal["ok"]
+    message: str
+    task_id: str
+    queued_tasks: int
+    running_workers: int
 
 
 class LogEntry(BaseModel):

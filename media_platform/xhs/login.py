@@ -22,7 +22,7 @@
 XiaoHongShu Login - Energy Browser Only
 
 This module provides login functionality for Xiaohongshu (XHS) platform
-using the Energy browser service. No Playwright dependency required.
+using the Energy browser service. No legacy browser-driver dependency required.
 """
 
 import asyncio
@@ -45,7 +45,7 @@ class XiaoHongShuLogin(AbstractLogin):
     XiaoHongShu Login - Energy Browser Only
 
     This class provides login functionality using the Energy browser service.
-    No Playwright dependency is required.
+    No legacy browser-driver dependency is required.
     """
 
     def __init__(self,

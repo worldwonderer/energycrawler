@@ -36,25 +36,26 @@ import cmd_arg
 import config
 from database import db
 from base.base_crawler import AbstractCrawler
-from media_platform.twitter import TwitterCrawler
-from media_platform.xhs import XiaoHongShuCrawler
 from tools.async_file_writer import AsyncFileWriter
 from var import crawler_type_var
 
 
 class CrawlerFactory:
-    CRAWLERS: dict[str, Type[AbstractCrawler]] = {
-        "xhs": XiaoHongShuCrawler,
-        "x": TwitterCrawler,
-        "twitter": TwitterCrawler,
+    CRAWLER_IMPORTS: dict[str, tuple[str, str]] = {
+        "xhs": ("media_platform.xhs", "XiaoHongShuCrawler"),
+        "x": ("media_platform.twitter", "TwitterCrawler"),
+        "twitter": ("media_platform.twitter", "TwitterCrawler"),
     }
 
     @staticmethod
     def create_crawler(platform: str) -> AbstractCrawler:
-        crawler_class = CrawlerFactory.CRAWLERS.get(platform)
-        if not crawler_class:
-            supported = ", ".join(sorted(CrawlerFactory.CRAWLERS))
+        import_path = CrawlerFactory.CRAWLER_IMPORTS.get(platform)
+        if not import_path:
+            supported = ", ".join(sorted(CrawlerFactory.CRAWLER_IMPORTS))
             raise ValueError(f"Invalid media platform: {platform!r}. Supported: {supported}")
+        module_name, class_name = import_path
+        module = __import__(module_name, fromlist=[class_name])
+        crawler_class: Type[AbstractCrawler] = getattr(module, class_name)
         return crawler_class()
 
 
@@ -123,14 +124,7 @@ async def async_cleanup() -> None:
                 if not _is_ignorable_close_error(e):
                     print(f"[Main] Error closing crawler resources: {e}")
 
-        if getattr(crawler, "cdp_manager", None):
-            try:
-                await crawler.cdp_manager.cleanup(force=True)
-            except Exception as e:
-                if not _is_ignorable_close_error(e):
-                    print(f"[Main] Error cleaning up CDP browser: {e}")
-
-        elif getattr(crawler, "browser_context", None):
+        if getattr(crawler, "browser_context", None):
             try:
                 await crawler.browser_context.close()
             except Exception as e:
@@ -143,17 +137,4 @@ async def async_cleanup() -> None:
 if __name__ == "__main__":
     from tools.app_runner import run
 
-    def _force_stop() -> None:
-        c = crawler
-        if not c:
-            return
-        cdp_manager = getattr(c, "cdp_manager", None)
-        launcher = getattr(cdp_manager, "launcher", None)
-        if not launcher:
-            return
-        try:
-            launcher.cleanup()
-        except Exception:
-            pass
-
-    run(main, async_cleanup, cleanup_timeout_seconds=15.0, on_first_interrupt=_force_stop)
+    run(main, async_cleanup, cleanup_timeout_seconds=15.0)

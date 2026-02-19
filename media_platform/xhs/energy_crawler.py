@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Energy 模式下的小红书爬虫 - 不依赖 Playwright
+# Energy 模式下的小红书爬虫 - 不依赖旧浏览器驱动
 # 当 ENABLE_ENERGY_BROWSER=True 时使用
 
 import asyncio
@@ -31,7 +31,7 @@ except ImportError:
 class XiaoHongShuEnergyCrawler(AbstractCrawler):
     """
     纯 Energy 模式的小红书爬虫
-    不依赖 Playwright，使用 Energy 浏览器服务
+    不依赖旧浏览器驱动，使用 Energy 浏览器服务
     """
 
     xhs_client: XiaoHongShuClient
@@ -143,9 +143,7 @@ class XiaoHongShuEnergyCrawler(AbstractCrawler):
     async def search(self) -> None:
         """搜索笔记并获取评论"""
         utils.logger.info("[XiaoHongShuEnergyCrawler.search] Begin search XHS keywords")
-        xhs_limit_count = 20
-        if config.CRAWLER_MAX_NOTES_COUNT < xhs_limit_count:
-            config.CRAWLER_MAX_NOTES_COUNT = xhs_limit_count
+        target_note_count = max(1, int(config.CRAWLER_MAX_NOTES_COUNT))
         start_page = config.START_PAGE
 
         for keyword in config.KEYWORDS.split(","):
@@ -153,8 +151,9 @@ class XiaoHongShuEnergyCrawler(AbstractCrawler):
             utils.logger.info(f"[XiaoHongShuEnergyCrawler.search] Current search keyword: {keyword}")
             page = 1
             search_id = get_search_id()
+            fetched_note_count = 0
 
-            while (page - start_page + 1) * xhs_limit_count <= config.CRAWLER_MAX_NOTES_COUNT:
+            while fetched_note_count < target_note_count:
                 if page < start_page:
                     utils.logger.info(f"[XiaoHongShuEnergyCrawler.search] Skip page {page}")
                     page += 1
@@ -172,11 +171,24 @@ class XiaoHongShuEnergyCrawler(AbstractCrawler):
                         sort=(SearchSortType(config.SORT_TYPE) if config.SORT_TYPE != "" else SearchSortType.GENERAL),
                     )
 
-                    utils.logger.info(f"[XiaoHongShuEnergyCrawler.search] Search notes count: {len(notes_res.get('items', []))}")
-
-                    if not notes_res or not notes_res.get("has_more", False):
+                    if not notes_res:
                         utils.logger.info("[XiaoHongShuEnergyCrawler.search] No more content!")
                         break
+
+                    raw_items = notes_res.get("items", [])
+                    valid_items = [item for item in raw_items if item.get("model_type") not in ("rec_query", "hot_query")]
+                    remaining = target_note_count - fetched_note_count
+                    selected_items = valid_items[:remaining]
+                    utils.logger.info(
+                        f"[XiaoHongShuEnergyCrawler.search] Search notes count: {len(raw_items)}, "
+                        f"selected: {len(selected_items)}, fetched/target: {fetched_note_count}/{target_note_count}"
+                    )
+                    if not selected_items:
+                        utils.logger.info("[XiaoHongShuEnergyCrawler.search] No valid notes in current page")
+                        if not notes_res.get("has_more", False):
+                            break
+                        page += 1
+                        continue
 
                     semaphore = asyncio.Semaphore(config.MAX_CONCURRENCY_NUM)
                     task_list = [
@@ -185,7 +197,7 @@ class XiaoHongShuEnergyCrawler(AbstractCrawler):
                             xsec_source=post_item.get("xsec_source"),
                             xsec_token=post_item.get("xsec_token"),
                             semaphore=semaphore,
-                        ) for post_item in notes_res.get("items", []) if post_item.get("model_type") not in ("rec_query", "hot_query")
+                        ) for post_item in selected_items
                     ]
                     note_details = await asyncio.gather(*task_list)
 
@@ -195,9 +207,12 @@ class XiaoHongShuEnergyCrawler(AbstractCrawler):
                             await self.get_notice_media(note_detail)
                             note_ids.append(note_detail.get("note_id"))
                             xsec_tokens.append(note_detail.get("xsec_token"))
+                    fetched_note_count += len(note_ids)
 
                     page += 1
                     await self.batch_get_note_comments(note_ids, xsec_tokens)
+                    if fetched_note_count >= target_note_count or not notes_res.get("has_more", False):
+                        break
                     await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
 
                 except DataFetchError:
@@ -312,6 +327,9 @@ class XiaoHongShuEnergyCrawler(AbstractCrawler):
             except Exception as e:
                 utils.logger.error(f"[XiaoHongShuEnergyCrawler.get_note_detail_async_task] Unexpected error: {e}")
                 return None
+            finally:
+                # Keep low request rate for account safety.
+                await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
 
     async def batch_get_note_comments(self, note_ids: List[str], xsec_tokens: List[str]) -> None:
         """批量获取笔记评论"""
@@ -330,27 +348,37 @@ class XiaoHongShuEnergyCrawler(AbstractCrawler):
         """获取单篇笔记的评论"""
         async with semaphore:
             try:
+                max_comments = max(0, int(config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES))
+                if max_comments == 0:
+                    return
                 cursor = ""
+                fetched_count = 0
                 while True:
                     comments_res = await self.xhs_client.get_note_comments(
                         note_id=note_id,
                         xsec_token=xsec_token,
                         cursor=cursor,
                     )
-                    if not comments_res or not comments_res.get("has_more", False):
+                    if not comments_res:
                         break
-                    cursor = comments_res.get("cursor", "")
                     comments = comments_res.get("comments", [])
                     if not comments:
                         break
-                    for comment in comments:
-                        await xhs_store.update_xhs_note_comment(note_id=note_id, comment=comment)
+                    remaining = max_comments - fetched_count
+                    comments_to_store = comments[:remaining]
+                    for comment in comments_to_store:
+                        await xhs_store.update_xhs_note_comment(note_id=note_id, comment_item=comment)
+                    fetched_count += len(comments_to_store)
 
                     if config.ENABLE_GET_SUB_COMMENTS:
-                        await self.get_sub_comments(comments, note_id, xsec_token)
+                        await self.get_sub_comments(comments_to_store, note_id, xsec_token)
 
-                    if len(comments) < config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES:
+                    if fetched_count >= max_comments or not comments_res.get("has_more", False):
                         break
+                    cursor = comments_res.get("cursor", "")
+                    if not cursor:
+                        break
+                    await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
             except DataFetchError as ex:
                 utils.logger.error(f"[XiaoHongShuEnergyCrawler.get_note_comments] Get comments error: {ex}")
 

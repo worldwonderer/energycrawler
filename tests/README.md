@@ -70,6 +70,46 @@ cd tests/e2e
 pytest -v -m e2e
 ```
 
+### Real Crawl Flow (XHS + X, with login gate)
+
+For real crawler verification, use the interactive flow runner. It will:
+1. check Energy service connectivity
+2. detect XHS/X login status
+3. open login pages and pause until login is complete
+4. run real XHS/X crawling
+
+```bash
+cd /Users/pite/energycrawler
+.venv/bin/python tests/e2e/run_xhs_x_crawl_flow.py
+```
+
+Runner defaults are conservative for account safety:
+- `--max-count` default is `3`
+- comment limit is capped to `3` per note
+- per-batch/request interval is at least `10s`
+
+For the safest real check, run with a single item:
+
+```bash
+cd /Users/pite/energycrawler
+.venv/bin/python tests/e2e/run_xhs_x_crawl_flow.py --max-count 1
+```
+
+Only perform login checks (skip crawl):
+
+```bash
+cd /Users/pite/energycrawler
+.venv/bin/python tests/e2e/run_xhs_x_crawl_flow.py --skip-crawl
+```
+
+If X login via Google is blocked in embedded browser, set cookie envs and skip interactive X login:
+
+```bash
+export TWITTER_AUTH_TOKEN="your_auth_token"
+export TWITTER_CT0="your_ct0"
+.venv/bin/python tests/e2e/run_xhs_x_crawl_flow.py
+```
+
 ### Run All Tests
 
 ```bash

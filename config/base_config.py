@@ -44,15 +44,9 @@ HEADLESS = False
 # Whether to save login status
 SAVE_LOGIN_STATE = True
 
-# ==================== CDP (Chrome DevTools Protocol) Configuration ====================
-# Whether to enable CDP mode - use the user's existing Chrome/Edge browser to crawl, providing better anti-detection capabilities
-# Once enabled, the user's Chrome/Edge browser will be automatically detected and started, and controlled through the CDP protocol.
-# This method uses the real browser environment, including the user's extensions, cookies and settings, greatly reducing the risk of detection.
-ENABLE_CDP_MODE = True
-
 # ==================== Energy Browser Configuration ====================
 # Whether to enable Energy browser mode - use Energy gRPC service for browser automation
-# When enabled, signature generation will use the Energy browser service instead of Playwright
+# When enabled, signature generation will use the Energy browser service instead of legacy browser drivers
 # This provides a centralized browser service that can be shared across multiple crawler instances
 ENABLE_ENERGY_BROWSER = True  # Default enabled for better signature generation
 
@@ -70,27 +64,6 @@ ENERGY_BROWSER_ID_PREFIX = "energycrawler"
 XHS_ENABLE_ENERGY = ENABLE_ENERGY_BROWSER
 TWITTER_ENABLE_ENERGY = ENABLE_ENERGY_BROWSER
 
-# CDP debug port, used to communicate with the browser
-# If the port is occupied, the system will automatically try the next available port
-CDP_DEBUG_PORT = 9222
-
-# Custom browser path (optional)
-# If it is empty, the system will automatically detect the installation path of Chrome/Edge
-# Windows example: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
-# macOS example: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-CUSTOM_BROWSER_PATH = ""
-
-# Whether to enable headless mode in CDP mode
-# NOTE: Even if set to True, some anti-detection features may not work well in headless mode
-CDP_HEADLESS = False
-
-# Browser startup timeout (seconds)
-BROWSER_LAUNCH_TIMEOUT = 60
-
-# Whether to automatically close the browser when the program ends
-# Set to False to keep the browser running for easy debugging
-AUTO_CLOSE_BROWSER = True
-
 # Data saving type option configuration, supports six types: csv, db, json, sqlite, excel, postgres. It is best to save to DB, with deduplication function.
 SAVE_DATA_OPTION = "json"  # csv or db or json or sqlite or excel or postgres
 
@@ -104,7 +77,7 @@ USER_DATA_DIR = "%s_user_data_dir"  # %s will be replaced by platform name
 START_PAGE = 1
 
 # Control the number of crawled videos/posts
-CRAWLER_MAX_NOTES_COUNT = 15
+CRAWLER_MAX_NOTES_COUNT = 5
 
 # Controlling the number of concurrent crawlers
 MAX_CONCURRENCY_NUM = 1
@@ -116,7 +89,7 @@ ENABLE_GET_MEIDAS = False
 ENABLE_GET_COMMENTS = True
 
 # Control the number of crawled first-level comments (single video/post)
-CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES = 10
+CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES = 3
 
 # Whether to enable the mode of crawling second-level comments. By default, crawling of second-level comments is not enabled.
 # If the old version of the project uses db, you need to refer to schema/tables.sql line 287 to add table fields.
@@ -139,7 +112,7 @@ STOP_WORDS_FILE = "./docs/hit_stopwords.txt"
 FONT_PATH = "./docs/STZHONGS.TTF"
 
 # Crawl interval
-CRAWLER_MAX_SLEEP_SEC = 2
+CRAWLER_MAX_SLEEP_SEC = 10
 
 # =================================== Twitter/X.com Configuration ===================================
 

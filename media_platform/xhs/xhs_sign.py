@@ -17,7 +17,7 @@
 # 使用本代码即表示您同意遵守上述原则和LICENSE中的所有条款。
 
 # Xiaohongshu signature algorithm core functions
-# Used for generating signatures via playwright injection
+# Used for generating signatures via browser-side injection
 
 import ctypes
 import random

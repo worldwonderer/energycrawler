@@ -1,33 +1,35 @@
-# EnergyCrawler (xhs + x)
+# EnergyCrawler
 
-一个面向自用场景的精简版 EnergyCrawler，仅保留两个站点：
-- `xhs` (小红书)
-- `x` (X / Twitter)
+面向 `xhs` 与 `x` 的 Energy-only 抓取工程。
 
-当前分支已移除非目标站点相关爬虫与存储实现，不再做向后兼容。
+## 项目定位
 
-## 当前定位
-
-- 目标：稳定抓取 `xhs` 与 `x`，减少维护面
-- 签名方案：`xhs` 签名通过 Energy 获取（不再使用 `playwright_sign` 兜底）
-- 运行方式：CLI + WebUI
+- 平台范围：`xhs`（小红书）、`x`（X / Twitter）
+- 浏览器能力：统一通过 Energy 服务提供（gRPC）
+- 运行入口：CLI + WebUI API
 - 存储方式：`csv / json / db / sqlite / mongodb / excel / postgres`
 
-## 关键变化
+## 架构
 
-- 平台枚举已收敛为：`xhs | x`
-- 主入口 `CrawlerFactory` 仅保留 `xhs` 与 `x`（兼容 `twitter` 别名）
-- 已删除非目标平台目录与配置（仅保留 `xhs` 与 `x` 运行链路）
-- API 平台配置接口仅返回 `xhs` 与 `x`
+- 抓取执行：`main.py`
+- WebUI API：`api.main:app`
+- 任务调度：`api/services/crawler_manager.py`
+- 并发模型：队列 + worker 池
+
+并发 worker 数由环境变量控制：
+
+```bash
+CRAWLER_MAX_WORKERS=2
+```
 
 ## 环境要求
 
 - Python `3.11`
-- `uv`（依赖安装与运行）
-- Energy 服务（默认地址：`localhost:50051`）
+- `uv`
+- Energy 服务（默认：`localhost:50051`）
 
 可选：
-- Node.js（只在你需要前端开发/重建 WebUI 时使用）
+- Node.js（仅在前端开发/重建 WebUI 时需要）
 
 ## 快速开始
 
@@ -39,23 +41,21 @@ uv sync
 
 ### 2. 启动 Energy 服务
 
-默认配置在 `config/base_config.py`：
-- `ENABLE_ENERGY_BROWSER = True`
-- `ENERGY_SERVICE_ADDRESS = "localhost:50051"`
-
-macOS 可直接使用：
-
 ```bash
 bash energy-service/start-macos.sh
 ```
 
-### 3. 配置账号与抓取参数
+### 3. 配置参数
 
-编辑 `config/base_config.py`（和必要的环境变量）例如：
-- 平台：`PLATFORM = "xhs"` 或 `PLATFORM = "x"`
-- 抓取模式：`CRAWLER_TYPE = "search" | "detail" | "creator"`
-- 登录方式：`LOGIN_TYPE = "qrcode" | "cookie" | "phone"`
-- X 站点常用：`TWITTER_AUTH_TOKEN`、`TWITTER_CT0`
+配置文件：`config/base_config.py`
+
+常用项：
+
+- `PLATFORM = "xhs" | "x"`
+- `CRAWLER_TYPE = "search" | "detail" | "creator"`
+- `LOGIN_TYPE = "qrcode" | "cookie" | "phone"`
+- `ENERGY_SERVICE_ADDRESS = "localhost:50051"`
+- X 平台鉴权：`TWITTER_AUTH_TOKEN`、`TWITTER_CT0`
 
 ### 4. 运行 CLI
 
@@ -89,7 +89,7 @@ X 创作者抓取：
 uv run main.py --platform x --lt cookie --type creator --creator_id "elonmusk"
 ```
 
-查看全部参数：
+查看参数：
 
 ```bash
 uv run main.py --help
@@ -97,28 +97,21 @@ uv run main.py --help
 
 ## WebUI
 
-启动 API + WebUI：
+启动 API：
 
 ```bash
 uv run uvicorn api.main:app --port 8080 --reload
 ```
 
-打开：`http://localhost:8080`
+访问：`http://localhost:8080`
 
-## 常见问题
+常用接口：
 
-1. `xhs` 接口签名失败
-- 确认 Energy 服务已启动并监听 `50051`
-- 确认 `ENABLE_ENERGY_BROWSER=True`
-- 确认 `XHS_ENABLE_ENERGY=True`
-
-2. X 抓取返回鉴权错误
-- 检查 `TWITTER_AUTH_TOKEN` 是否有效
-- 必要时补充 `TWITTER_CT0`
-- 先在浏览器确认账号可正常访问目标内容
-
-3. `--platform` 报错
-- 当前仅支持 `xhs` 与 `x`（`twitter` 作为代码别名，不建议 CLI 使用）
+- `POST /api/crawler/start`：提交任务
+- `POST /api/crawler/stop`：停止全部任务并清空队列
+- `GET /api/crawler/status`：获取状态
+- `GET /api/crawler/cluster`：查看队列与 worker 快照
+- `GET /api/crawler/logs`：查看日志
 
 ## 测试
 
@@ -126,8 +119,6 @@ uv run uvicorn api.main:app --port 8080 --reload
 uv run pytest -q tests
 ```
 
-当前基线：`37 passed, 55 skipped`（本地环境）。
-
 ## 免责声明
 
-本项目仅用于个人学习与技术研究，请遵守目标平台服务条款和相关法律法规。禁止用于商业化和非法用途。
+本项目仅用于学习与研究，请遵守目标平台服务条款和适用法律法规。

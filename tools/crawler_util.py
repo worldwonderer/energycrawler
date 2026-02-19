@@ -29,16 +29,15 @@ import re
 import urllib
 import urllib.parse
 from io import BytesIO
-from typing import Dict, List, Optional, Tuple, cast
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 import httpx
 from PIL import Image, ImageDraw, ImageShow
-from playwright.async_api import Cookie, Page
 
 from . import utils
 
 
-async def find_login_qrcode(page: Page, selector: str) -> str:
+async def find_login_qrcode(page: Any, selector: str) -> str:
     """find login qrcode image from target selector"""
     try:
         elements = await page.wait_for_selector(
@@ -61,7 +60,7 @@ async def find_login_qrcode(page: Page, selector: str) -> str:
         return ""
 
 
-async def find_qrcode_img_from_canvas(page: Page, canvas_selector: str) -> str:
+async def find_qrcode_img_from_canvas(page: Any, canvas_selector: str) -> str:
     """
     find qrcode image from canvas element
     Args:
@@ -133,7 +132,7 @@ def get_mobile_user_agent() -> str:
     return random.choice(ua_list)
 
 
-def convert_cookies(cookies: Optional[List[Cookie]]) -> Tuple[str, Dict]:
+def convert_cookies(cookies: Optional[List[Dict[str, Any]]]) -> Tuple[str, Dict]:
     if not cookies:
         return "", {}
     cookies_str = ";".join([f"{cookie.get('name')}={cookie.get('value')}" for cookie in cookies])
@@ -174,29 +173,29 @@ def match_interact_info_count(count_str: str) -> int:
 
 
 def format_proxy_info(ip_proxy_info) -> Tuple[Optional[Dict], Optional[str]]:
-    """format proxy info for playwright and httpx"""
+    """Format proxy info for browser clients and httpx."""
     # fix circular import issue
     from proxy.proxy_ip_pool import IpInfoModel
     ip_proxy_info = cast(IpInfoModel, ip_proxy_info)
 
-    # Playwright proxy server should be in format "host:port" without protocol prefix
+    # Browser proxy server should be in format "host:port" without protocol prefix
     server = f"{ip_proxy_info.ip}:{ip_proxy_info.port}"
-    
-    playwright_proxy = {
+
+    browser_proxy = {
         "server": server,
     }
-    
+
     # Only add username and password if they are not empty
     if ip_proxy_info.user and ip_proxy_info.password:
-        playwright_proxy["username"] = ip_proxy_info.user
-        playwright_proxy["password"] = ip_proxy_info.password
-    
+        browser_proxy["username"] = ip_proxy_info.user
+        browser_proxy["password"] = ip_proxy_info.password
+
     # httpx 0.28.1 requires passing proxy URL string directly, not a dictionary
     if ip_proxy_info.user and ip_proxy_info.password:
         httpx_proxy = f"http://{ip_proxy_info.user}:{ip_proxy_info.password}@{ip_proxy_info.ip}:{ip_proxy_info.port}"
     else:
         httpx_proxy = f"http://{ip_proxy_info.ip}:{ip_proxy_info.port}"
-    return playwright_proxy, httpx_proxy
+    return browser_proxy, httpx_proxy
 
 
 def extract_text_from_html(html: str) -> str:

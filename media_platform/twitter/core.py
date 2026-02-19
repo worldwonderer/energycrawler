@@ -364,6 +364,9 @@ class TwitterCrawler(AbstractCrawler):
 
             except TwitterError as e:
                 utils.logger.error(f"[TwitterCrawler._get_tweet_detail_async_task] Error: {e}")
+            finally:
+                # Keep low request rate for account safety.
+                await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
 
     async def get_user_info(self) -> None:
         """Get user information."""
@@ -401,6 +404,9 @@ class TwitterCrawler(AbstractCrawler):
 
             except Exception as e:
                 utils.logger.error(f"[TwitterCrawler._process_tweet_async_task] Error: {e}")
+            finally:
+                # Keep low request rate for account safety.
+                await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
 
     async def _store_tweet(self, tweet: TwitterTweet) -> None:
         """
@@ -474,21 +480,21 @@ class TwitterCrawler(AbstractCrawler):
         """Get tweet IDs from config."""
         return self._tweet_ids
 
-    async def launch_browser(self, chromium, playwright_proxy, user_agent, headless=True):
+    async def launch_browser(self, chromium, browser_proxy, user_agent, headless=True):
         """
         Not used - Energy browser handles browser automation.
 
         Raises:
-            NotImplementedError: Always, as Playwright is not supported.
+            NotImplementedError: Always, as legacy browser mode is not supported.
         """
-        raise NotImplementedError("Use Energy browser adapter instead of Playwright.")
+        raise NotImplementedError("Use Energy browser adapter instead of legacy browser mode.")
 
     async def close(self) -> None:
         """Close crawler and cleanup resources."""
         # Close Twitter client
         if self.twitter_client:
             try:
-                await self.twitter_client.close()
+                self.twitter_client.close()
                 utils.logger.info("[TwitterCrawler.close] Twitter client closed")
             except Exception as e:
                 utils.logger.error(f"[TwitterCrawler.close] Error closing Twitter client: {e}")
