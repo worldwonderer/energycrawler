@@ -53,7 +53,7 @@ def _make_request() -> CrawlerStartRequest:
     return CrawlerStartRequest(
         platform="xhs",
         crawler_type="search",
-        login_type="qrcode",
+        login_type="cookie",
         keywords="test keyword",
         save_option="json",
     )

@@ -53,7 +53,7 @@ _load_project_env()
 # Basic configuration
 PLATFORM = "xhs"  # Platform, xhs | x
 KEYWORDS = "编程副业,编程兼职"  # Keyword search configuration, separated by English commas
-LOGIN_TYPE = "qrcode"  # qrcode or phone or cookie
+LOGIN_TYPE = "cookie"  # cookie only
 COOKIES = ""
 CRAWLER_TYPE = (
     "search"  # Crawling type, search (keyword search) | detail (post details) | creator (creator homepage data)
@@ -162,9 +162,6 @@ _twitter_ct0 = os.getenv("TWITTER_CT0", "").strip()
 if not _twitter_ct0:
     _twitter_ct0 = _twitter_cookie_dict.get("ct0", "").strip()
 TWITTER_CT0 = _twitter_ct0
-
-# Enable browser-based login (QR code or cookie verification)
-TWITTER_ENABLE_LOGIN = os.getenv("TWITTER_ENABLE_LOGIN", "false").lower() == "true"
 
 # Headless mode for browser
 TWITTER_HEADLESS = os.getenv("TWITTER_HEADLESS", "true").lower() == "true"

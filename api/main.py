@@ -145,7 +145,6 @@ async def get_config_options():
     """Get all configuration options"""
     return {
         "login_types": [
-            {"value": "qrcode", "label": "QR Code Login"},
             {"value": "cookie", "label": "Cookie Login"},
         ],
         "crawler_types": [

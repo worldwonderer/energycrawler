@@ -23,8 +23,7 @@ This module provides a pure Energy-based crawler for Xiaohongshu (XHS) platform.
 No legacy browser-driver dependency required.
 
 Usage:
-    This module is deprecated. Use energy_crawler.py instead.
-    The XiaoHongShuCrawler class here is now an alias for XiaoHongShuEnergyCrawler.
+    The XiaoHongShuCrawler class here is the primary Energy-based crawler.
 """
 
 import asyncio

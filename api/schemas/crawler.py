@@ -29,8 +29,6 @@ class PlatformEnum(str, Enum):
 
 class LoginTypeEnum(str, Enum):
     """Login method"""
-    QRCODE = "qrcode"
-    PHONE = "phone"
     COOKIE = "cookie"
 
 
@@ -54,7 +52,7 @@ class SaveDataOptionEnum(str, Enum):
 class CrawlerStartRequest(BaseModel):
     """Crawler start request"""
     platform: PlatformEnum
-    login_type: LoginTypeEnum = LoginTypeEnum.QRCODE
+    login_type: LoginTypeEnum = LoginTypeEnum.COOKIE
     crawler_type: CrawlerTypeEnum = CrawlerTypeEnum.SEARCH
     keywords: str = ""  # Keywords for search mode
     specified_ids: str = ""  # Post/video ID list for detail mode, comma-separated

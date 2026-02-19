@@ -68,30 +68,6 @@ class AbstractCrawler(ABC):
         pass
 
 
-class AbstractLogin(ABC):
-    """Abstract base class for login handlers"""
-
-    @abstractmethod
-    async def begin(self):
-        """Begin the login process"""
-        pass
-
-    @abstractmethod
-    async def login_by_qrcode(self):
-        """Login using QR code"""
-        pass
-
-    @abstractmethod
-    async def login_by_mobile(self):
-        """Login using mobile phone"""
-        pass
-
-    @abstractmethod
-    async def login_by_cookies(self):
-        """Login using cookies"""
-        pass
-
-
 class AbstractStore(ABC):
     """Abstract base class for data storage"""
 

@@ -72,7 +72,6 @@ class TwitterCrawler(AbstractCrawler):
         self._ct0 = getattr(config, 'TWITTER_CT0', '')
         self._cookie_header = getattr(config, 'TWITTER_COOKIE', '')
         self._headless = getattr(config, 'TWITTER_HEADLESS', True)
-        self._enable_login = getattr(config, 'TWITTER_ENABLE_LOGIN', False)
         self._search_type = getattr(config, 'TWITTER_SEARCH_TYPE', 'Latest')
 
         # Crawl parameters
@@ -106,8 +105,6 @@ class TwitterCrawler(AbstractCrawler):
         # Check authentication
         if not await self.twitter_client.pong():
             utils.logger.warning("[TwitterCrawler.start] Authentication required. Please set TWITTER_AUTH_TOKEN.")
-            if self._enable_login:
-                utils.logger.info("[TwitterCrawler.start] Login enabled but not yet implemented.")
             await self.close()
             return
 
