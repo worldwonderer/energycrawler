@@ -30,6 +30,7 @@ import typer
 from typing_extensions import Annotated
 
 import config
+from tools import utils
 from tools.utils import str2bool
 
 
@@ -259,6 +260,22 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
                 rich_help_panel="Performance Configuration",
             ),
         ] = config.MAX_CONCURRENCY_NUM,
+        max_notes_count: Annotated[
+            int,
+            typer.Option(
+                "--max_notes_count",
+                help="Maximum content count per task",
+                rich_help_panel="Performance Configuration",
+            ),
+        ] = config.CRAWLER_MAX_NOTES_COUNT,
+        crawl_sleep_sec: Annotated[
+            float,
+            typer.Option(
+                "--crawl_sleep_sec",
+                help="Base interval (seconds) between crawl requests",
+                rich_help_panel="Performance Configuration",
+            ),
+        ] = float(config.CRAWLER_MAX_SLEEP_SEC),
         save_data_path: Annotated[
             str,
             typer.Option(
@@ -319,6 +336,8 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
         config.COOKIES = cookies
         config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES = max_comments_count_singlenotes
         config.MAX_CONCURRENCY_NUM = max_concurrency_num
+        config.CRAWLER_MAX_NOTES_COUNT = max_notes_count
+        config.CRAWLER_MAX_SLEEP_SEC = crawl_sleep_sec
         config.SAVE_DATA_PATH = save_data_path
         config.ENABLE_IP_PROXY = enable_ip_proxy_value
         config.IP_PROXY_POOL_COUNT = ip_proxy_pool_count
@@ -336,6 +355,15 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
                 config.XHS_CREATOR_ID_LIST = creator_id_list
             elif platform == PlatformEnum.X:
                 config.TWITTER_USER_IDS = creator_id_list
+
+        # Keep Twitter auth config in sync with CLI cookies when crawling X.
+        if platform == PlatformEnum.X and cookies:
+            config.TWITTER_COOKIE = cookies
+            cookie_map = utils.convert_str_cookie_to_dict(cookies)
+            if cookie_map.get("auth_token"):
+                config.TWITTER_AUTH_TOKEN = cookie_map["auth_token"]
+            if cookie_map.get("ct0"):
+                config.TWITTER_CT0 = cookie_map["ct0"]
 
         return SimpleNamespace(
             platform=config.PLATFORM,

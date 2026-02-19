@@ -6,6 +6,7 @@ This module provides a high-level interface for browser automation.
 """
 
 import grpc
+import time
 from typing import List, Dict, Optional
 from dataclasses import dataclass
 
@@ -141,9 +142,25 @@ class BrowserClient:
             browser_id=browser_id,
             url=url
         )
-        response = self.stub.GetCookies(request)
-        if not response.success:
-            raise Exception(f"Get cookies failed: {response.error}")
+        response = None
+        last_error = ""
+        for attempt in range(2):
+            response = self.stub.GetCookies(request)
+            if response.success:
+                break
+            last_error = response.error or ""
+            if self._is_timeout_error(last_error) and attempt == 0:
+                time.sleep(0.5)
+                continue
+            if self._is_timeout_error(last_error):
+                # Some service/runtime combinations intermittently time out on
+                # cookie retrieval for third-party domains. Return empty list
+                # instead of failing hard so callers can proceed safely.
+                return []
+            raise Exception(f"Get cookies failed: {last_error}")
+
+        if response is None or not response.success:
+            return []
 
         return [
             Cookie(
@@ -204,8 +221,42 @@ class BrowserClient:
         )
         response = self.stub.ExecuteJS(request)
         if not response.success:
-            raise Exception(f"Execute JS failed: {response.error}")
+            error = response.error or ""
+            if self._is_timeout_error(error):
+                fallback_script = self._build_js_fallback_script(script)
+                if fallback_script:
+                    fallback_resp = self.stub.ExecuteJS(
+                        browser_pb2.ExecuteJSRequest(
+                            browser_id=browser_id,
+                            script=fallback_script,
+                        )
+                    )
+                    if fallback_resp.success:
+                        return fallback_resp.result
+            raise Exception(f"Execute JS failed: {error}")
         return response.result
+
+    @staticmethod
+    def _is_timeout_error(error: str) -> bool:
+        return "timeout" in (error or "").lower()
+
+    @staticmethod
+    def _build_js_fallback_script(script: str) -> str:
+        normalized_lines = [line.strip() for line in (script or "").splitlines() if line.strip()]
+        if len(normalized_lines) <= 1:
+            return ""
+
+        last_line = normalized_lines[-1]
+        if last_line.startswith("return "):
+            return f"(function(){{\n{script}\n}})()"
+
+        if last_line.endswith(";"):
+            last_line = last_line[:-1].strip()
+
+        body = "\n".join(normalized_lines[:-1])
+        if body:
+            body += "\n"
+        return f"(function(){{\n{body}return ({last_line});\n}})()"
 
     def set_proxy(self, browser_id: str, proxy_url: str,
                   username: str = '', password: str = '') -> bool:

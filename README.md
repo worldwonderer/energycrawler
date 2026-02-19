@@ -57,6 +57,13 @@ bash energy-service/start-macos.sh
 - `LOGIN_TYPE = "cookie"`（当前仅保留 Cookie 注入登录态）
 - `ENERGY_SERVICE_ADDRESS = "localhost:50051"`
 - X 平台鉴权：`TWITTER_AUTH_TOKEN`、`TWITTER_CT0`（也支持 `TWITTER_COOKIE` 自动提取并透传全量 Cookie）
+- 安全上限：`CRAWLER_HARD_MAX_NOTES_COUNT`、`CRAWLER_HARD_MAX_CONCURRENCY`、`CRAWLER_MIN_SLEEP_SEC`
+
+登录后可把浏览器 Cookie 持久化到 `.env`：
+
+```bash
+uv run python scripts/export_cookies_to_env.py --platform all --xhs-browser-id manual_login_xhs --x-browser-id manual_login_x
+```
 
 ### 4. 运行 CLI
 
@@ -64,6 +71,12 @@ bash energy-service/start-macos.sh
 
 ```bash
 uv run main.py --platform xhs --lt cookie --type search --keywords 编程副业,独立开发
+```
+
+小批量安全测试（限制数量 + 增加间隔）：
+
+```bash
+uv run main.py --platform xhs --lt cookie --type search --keywords 新能源 --max_notes_count 3 --crawl_sleep_sec 12
 ```
 
 小红书详情抓取：
@@ -113,6 +126,22 @@ uv run uvicorn api.main:app --port 8080 --reload
 - `GET /api/crawler/status`：获取状态
 - `GET /api/crawler/cluster`：查看队列与 worker 快照
 - `GET /api/crawler/logs`：查看日志
+
+`POST /api/crawler/start` 支持额外安全参数：
+
+- `max_notes_count`：单任务最大抓取数量
+- `crawl_sleep_sec`：请求间隔秒数
+
+任务入队前会执行预检：
+
+- Energy 服务连通性检查
+- `x` 平台鉴权材料检查（`auth_token` + `ct0`）
+
+WebUI 静态资源维护：
+
+- 前端源码目录：`webui-src/`
+- 构建产物目录：`api/webui/`
+- 同步脚本：`bash scripts/sync_webui_assets.sh`
 
 ## 测试
 

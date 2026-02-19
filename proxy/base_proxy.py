@@ -29,7 +29,7 @@ from typing import List
 import config
 from cache.abs_cache import AbstractCache
 from cache.cache_factory import CacheFactory
-from tools.utils import utils
+from tools import utils
 
 from .types import IpInfoModel
 

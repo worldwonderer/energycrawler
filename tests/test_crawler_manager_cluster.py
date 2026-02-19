@@ -4,11 +4,14 @@ Unit tests for simplified crawler cluster manager.
 """
 
 from collections import deque
+import importlib
 
 import pytest
 
 from api.schemas import CrawlerStartRequest
 from api.services.crawler_manager import CrawlerManager
+
+crawler_manager_module = importlib.import_module("api.services.crawler_manager")
 
 
 class _FakeStdout:
@@ -60,7 +63,8 @@ def _make_request() -> CrawlerStartRequest:
 
 
 @pytest.mark.asyncio
-async def test_start_dispatches_to_worker_pool_and_queues_excess_tasks():
+async def test_start_dispatches_to_worker_pool_and_queues_excess_tasks(monkeypatch):
+    monkeypatch.setattr(crawler_manager_module, "preflight_for_platform", lambda *_args, **_kwargs: (True, "ok"))
     factory = _FakeProcessFactory()
     manager = CrawlerManager(
         max_workers=2,
@@ -84,7 +88,8 @@ async def test_start_dispatches_to_worker_pool_and_queues_excess_tasks():
 
 
 @pytest.mark.asyncio
-async def test_stop_terminates_running_workers_and_clears_queue():
+async def test_stop_terminates_running_workers_and_clears_queue(monkeypatch):
+    monkeypatch.setattr(crawler_manager_module, "preflight_for_platform", lambda *_args, **_kwargs: (True, "ok"))
     factory = _FakeProcessFactory()
     manager = CrawlerManager(
         max_workers=2,
@@ -130,3 +135,31 @@ def test_build_command_keeps_existing_cli_contract():
     assert "--get_comment" in cmd and "false" in cmd
     assert "--get_sub_comment" in cmd and "true" in cmd
     assert "--headless" in cmd and "true" in cmd
+
+
+def test_build_command_supports_safety_limit_overrides():
+    manager = CrawlerManager(max_workers=1, enable_output_reader=False)
+    request = CrawlerStartRequest(
+        platform="xhs",
+        crawler_type="search",
+        login_type="cookie",
+        keywords="新能源",
+        save_option="json",
+        max_notes_count=8,
+        crawl_sleep_sec=12.5,
+    )
+
+    cmd = manager._build_command(request)
+    assert "--max_notes_count" in cmd and "8" in cmd
+    assert "--crawl_sleep_sec" in cmd and "12.5" in cmd
+
+
+@pytest.mark.asyncio
+async def test_start_rejects_when_preflight_fails(monkeypatch):
+    monkeypatch.setattr(crawler_manager_module, "preflight_for_platform", lambda *_args, **_kwargs: (False, "energy unreachable"))
+    manager = CrawlerManager(max_workers=1, enable_output_reader=False)
+
+    result = await manager.start(_make_request())
+    assert result["accepted"] is False
+    assert result["error"] == "energy unreachable"
+    assert manager.get_status()["status"] in {"idle", "error"}

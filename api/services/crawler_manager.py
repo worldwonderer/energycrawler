@@ -27,6 +27,8 @@ from pathlib import Path
 from typing import Callable, Deque, List, Optional
 
 from ..schemas import CrawlerStartRequest, LogEntry
+from tools import utils
+from tools.preflight import preflight_for_platform
 
 
 class CrawlerManager:
@@ -118,6 +120,23 @@ class CrawlerManager:
 
     async def start(self, config: CrawlerStartRequest) -> dict:
         """Enqueue crawler task and dispatch to idle workers."""
+        ok, preflight_message = preflight_for_platform(config.platform.value, config.cookies)
+        if not ok:
+            self._last_error = preflight_message
+            entry = self._create_log_entry(
+                f"[PREFLIGHT] rejected task: {preflight_message}",
+                "error",
+            )
+            await self._push_log(entry)
+            utils.log_event(
+                "crawler_manager.preflight.failed",
+                level="warning",
+                platform=config.platform.value,
+                crawler_type=config.crawler_type.value,
+                message=preflight_message,
+            )
+            return {"accepted": False, "error": preflight_message}
+
         async with self._lock:
             task = _QueuedTask(
                 task_id=self._next_task_id(),
@@ -134,6 +153,12 @@ class CrawlerManager:
                 "info",
             )
             await self._push_log(entry)
+            utils.log_event(
+                "crawler_manager.task.accepted",
+                task_id=task.task_id,
+                platform=config.platform.value,
+                crawler_type=config.crawler_type.value,
+            )
 
             await self._dispatch_pending_locked()
             snapshot = self._compose_status_locked()
@@ -261,6 +286,12 @@ class CrawlerManager:
         if config.cookies:
             cmd.extend(["--cookies", config.cookies])
 
+        if config.max_notes_count is not None:
+            cmd.extend(["--max_notes_count", str(config.max_notes_count)])
+
+        if config.crawl_sleep_sec is not None:
+            cmd.extend(["--crawl_sleep_sec", str(config.crawl_sleep_sec)])
+
         cmd.extend(["--headless", "true" if config.headless else "false"])
 
         return cmd
@@ -323,6 +354,7 @@ class CrawlerManager:
 
             task = self._pending_tasks.popleft()
             cmd = self._build_command(task.config)
+            worker_env = self._build_worker_env(task, worker.worker_id)
             try:
                 process = self._process_factory(
                     cmd,
@@ -332,7 +364,7 @@ class CrawlerManager:
                     encoding="utf-8",
                     bufsize=1,
                     cwd=str(self._project_root),
-                    env={**os.environ, "PYTHONUNBUFFERED": "1"},
+                    env=worker_env,
                 )
             except Exception as exc:
                 self._pending_tasks.appendleft(task)
@@ -343,6 +375,15 @@ class CrawlerManager:
                     "error",
                 )
                 await self._push_log(entry)
+                utils.log_event(
+                    "crawler_manager.worker.spawn_failed",
+                    level="error",
+                    task_id=task.task_id,
+                    platform=task.config.platform.value,
+                    crawler_type=task.config.crawler_type.value,
+                    worker_id=worker.worker_id,
+                    error=str(exc),
+                )
                 break
 
             worker.process = process
@@ -357,6 +398,13 @@ class CrawlerManager:
                 "success",
             )
             await self._push_log(entry)
+            utils.log_event(
+                "crawler_manager.worker.started",
+                task_id=task.task_id,
+                platform=task.config.platform.value,
+                crawler_type=task.config.crawler_type.value,
+                worker_id=worker.worker_id,
+            )
 
             if self._enable_output_reader:
                 worker.read_task = asyncio.create_task(
@@ -377,6 +425,7 @@ class CrawlerManager:
             if worker.process is not process:
                 return
 
+            worker_config = worker.config
             worker.process = None
             worker.task_id = None
             worker.config = None
@@ -395,6 +444,15 @@ class CrawlerManager:
                         "warning",
                     )
                 await self._push_log(entry)
+                utils.log_event(
+                    "crawler_manager.worker.exited",
+                    level="warning" if exit_code != 0 else "info",
+                    task_id=task_id,
+                    worker_id=worker_id,
+                    exit_code=exit_code,
+                    platform=worker_config.platform.value if worker_config else "",
+                    crawler_type=worker_config.crawler_type.value if worker_config else "",
+                )
                 await self._dispatch_pending_locked()
 
             self._refresh_runtime_status_locked()
@@ -521,6 +579,16 @@ class CrawlerManager:
     def _next_task_id(self) -> str:
         self._task_seq += 1
         return f"task-{self._task_seq:06d}"
+
+    def _build_worker_env(self, task: "_QueuedTask", worker_id: int) -> dict:
+        return {
+            **os.environ,
+            "PYTHONUNBUFFERED": "1",
+            "ENERGYCRAWLER_TASK_ID": task.task_id,
+            "ENERGYCRAWLER_PLATFORM": task.config.platform.value,
+            "ENERGYCRAWLER_CRAWLER_TYPE": task.config.crawler_type.value,
+            "ENERGYCRAWLER_WORKER_ID": str(worker_id),
+        }
 
 
 @dataclass

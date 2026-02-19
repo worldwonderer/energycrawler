@@ -19,7 +19,12 @@
 
 
 import argparse
+import json
 import logging
+import os
+import sys
+from datetime import datetime
+from typing import Any
 
 from .crawler_util import *
 from .slider_util import *
@@ -53,3 +58,22 @@ def str2bool(v):
         return False
     else:
         raise argparse.ArgumentTypeError('Boolean value expected.')
+
+
+def log_event(event: str, *, level: str = "info", **fields: Any) -> None:
+    """Emit a structured log event with shared crawler context."""
+    payload = {
+        "ts": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "event": event,
+        "task_id": os.getenv("ENERGYCRAWLER_TASK_ID", ""),
+        "platform": os.getenv("ENERGYCRAWLER_PLATFORM", ""),
+        "crawler_type": os.getenv("ENERGYCRAWLER_CRAWLER_TYPE", ""),
+        **fields,
+    }
+    message = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    log_method = getattr(logger, level, logger.info)
+    log_method(message)
+
+
+# Backward compatibility for legacy imports: `from tools.utils import utils`.
+utils = sys.modules[__name__]

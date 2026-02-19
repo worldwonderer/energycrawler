@@ -15,13 +15,16 @@ for authentication and x-client-transaction-id generation.
 """
 
 import asyncio
-import random
+from pathlib import Path
 from typing import Dict, List, Optional, Any
+from urllib.parse import urlparse
 
 import config
 from base.base_crawler import AbstractCrawler
 from proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
+from store import twitter as twitter_store
 from tools import utils
+from tools.safety import safe_sleep, calc_backoff_delay
 from var import crawler_type_var, source_keyword_var
 
 try:
@@ -64,6 +67,7 @@ class TwitterCrawler(AbstractCrawler):
         self.index_url = "https://x.com"
         self.user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         self.ip_proxy_pool = None
+        self.twitter_client = None
         self.energy_adapter = None
         self.dom_extractor = None
 
@@ -83,6 +87,11 @@ class TwitterCrawler(AbstractCrawler):
     async def start(self) -> None:
         """Start the Twitter crawler."""
         utils.logger.info("[TwitterCrawler.start] Starting Twitter crawler...")
+        utils.log_event(
+            "crawler.twitter.start",
+            platform="x",
+            crawler_type=config.CRAWLER_TYPE,
+        )
 
         # Parse configuration
         self._parse_config()
@@ -128,6 +137,11 @@ class TwitterCrawler(AbstractCrawler):
         # Cleanup
         await self.close()
         utils.logger.info("[TwitterCrawler.start] Twitter crawler finished.")
+        utils.log_event(
+            "crawler.twitter.complete",
+            platform="x",
+            crawler_type=config.CRAWLER_TYPE,
+        )
 
     def _get_crawler_mode(self) -> TwitterCrawlerMode:
         """Get crawler mode from configuration."""
@@ -282,6 +296,7 @@ class TwitterCrawler(AbstractCrawler):
 
             cursor = None
             total_count = 0
+            attempt = 0
 
             while total_count < self._max_count:
                 try:
@@ -312,6 +327,7 @@ class TwitterCrawler(AbstractCrawler):
                     await asyncio.gather(*task_list)
 
                     total_count += len(tweets_to_process)
+                    attempt = 0
 
                     # Check for more results
                     if not result.get("has_more", False):
@@ -323,11 +339,16 @@ class TwitterCrawler(AbstractCrawler):
                         break
 
                     # Rate limiting
-                    await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
+                    await safe_sleep()
 
                 except TwitterError as e:
-                    utils.logger.error(f"[TwitterCrawler.search] Error searching tweets: {e}")
-                    break
+                    attempt += 1
+                    utils.logger.error(
+                        f"[TwitterCrawler.search] Error searching tweets (attempt={attempt}): {e}"
+                    )
+                    if attempt >= 3:
+                        break
+                    await safe_sleep(calc_backoff_delay(attempt))
 
             utils.logger.info(f"[TwitterCrawler.search] Total tweets collected for '{keyword}': {total_count}")
 
@@ -344,6 +365,7 @@ class TwitterCrawler(AbstractCrawler):
 
             cursor = None
             total_count = 0
+            attempt = 0
 
             while total_count < self._max_count:
                 try:
@@ -374,6 +396,7 @@ class TwitterCrawler(AbstractCrawler):
                     await asyncio.gather(*task_list)
 
                     total_count += len(tweets_to_process)
+                    attempt = 0
 
                     # Check for more results
                     if not result.get("has_more", False):
@@ -385,11 +408,16 @@ class TwitterCrawler(AbstractCrawler):
                         break
 
                     # Rate limiting
-                    await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
+                    await safe_sleep()
 
                 except TwitterError as e:
-                    utils.logger.error(f"[TwitterCrawler.get_user_tweets] Error fetching tweets: {e}")
-                    break
+                    attempt += 1
+                    utils.logger.error(
+                        f"[TwitterCrawler.get_user_tweets] Error fetching tweets (attempt={attempt}): {e}"
+                    )
+                    if attempt >= 3:
+                        break
+                    await safe_sleep(calc_backoff_delay(attempt))
 
             utils.logger.info(f"[TwitterCrawler.get_user_tweets] Total tweets for user {user_id}: {total_count}")
 
@@ -419,14 +447,13 @@ class TwitterCrawler(AbstractCrawler):
 
                     # Get comments if enabled
                     if config.ENABLE_GET_COMMENTS:
-                        # TODO: Implement tweet reply fetching
-                        pass
+                        await self._fetch_tweet_replies(tweet)
 
             except TwitterError as e:
                 utils.logger.error(f"[TwitterCrawler._get_tweet_detail_async_task] Error: {e}")
             finally:
                 # Keep low request rate for account safety.
-                await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
+                await safe_sleep()
 
     async def get_user_info(self) -> None:
         """Get user information."""
@@ -447,7 +474,7 @@ class TwitterCrawler(AbstractCrawler):
                 else:
                     utils.logger.warning(f"[TwitterCrawler.get_user_info] User not found: {user_id}")
 
-                await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
+                await safe_sleep()
 
             except TwitterError as e:
                 utils.logger.error(f"[TwitterCrawler.get_user_info] Error fetching user {user_id}: {e}")
@@ -466,7 +493,7 @@ class TwitterCrawler(AbstractCrawler):
                 utils.logger.error(f"[TwitterCrawler._process_tweet_async_task] Error: {e}")
             finally:
                 # Keep low request rate for account safety.
-                await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
+                await safe_sleep()
 
     async def _store_tweet(self, tweet: TwitterTweet) -> None:
         """
@@ -475,12 +502,11 @@ class TwitterCrawler(AbstractCrawler):
         Args:
             tweet: TwitterTweet to store
         """
-        # TODO: Implement actual storage using store module
-        # For now, just log the tweet
-        utils.logger.info(
-            f"[TwitterCrawler._store_tweet] Tweet: {tweet.id} by @{tweet.screen_name}: "
-            f"{tweet.text[:50]}... (likes: {tweet.favorite_count}, retweets: {tweet.retweet_count})"
-        )
+        if not tweet or not tweet.id:
+            return
+
+        tweet_item = self._tweet_to_store_item(tweet)
+        await twitter_store.update_twitter_tweet(tweet_item)
 
     async def _store_user(self, user: TwitterUser) -> None:
         """
@@ -489,12 +515,9 @@ class TwitterCrawler(AbstractCrawler):
         Args:
             user: TwitterUser to store
         """
-        # TODO: Implement actual storage using store module
-        # For now, just log the user
-        utils.logger.info(
-            f"[TwitterCrawler._store_user] User: @{user.screen_name} ({user.name}) - "
-            f"followers: {user.followers_count}, tweets: {user.statuses_count}"
-        )
+        if not user or not user.id:
+            return
+        await twitter_store.save_twitter_creator(user.id, self._user_to_store_item(user))
 
     async def _get_tweet_media(self, tweet: TwitterTweet) -> None:
         """
@@ -517,16 +540,167 @@ class TwitterCrawler(AbstractCrawler):
 
                 content = await self.twitter_client.get_media(url)
                 if content:
-                    # TODO: Implement actual media storage
+                    saved_file = await self._save_tweet_media_bytes(
+                        tweet_id=tweet.id,
+                        media_index=idx,
+                        media_type=media.media_type or "file",
+                        source_url=url,
+                        content=content,
+                    )
                     utils.logger.info(
                         f"[TwitterCrawler._get_tweet_media] Downloaded media {idx} "
-                        f"for tweet {tweet.id}: {media.media_type}"
+                        f"for tweet {tweet.id}: {media.media_type}, saved={saved_file}"
                     )
 
-                await asyncio.sleep(random.random())
+                await safe_sleep(1.0)
 
             except Exception as e:
                 utils.logger.error(f"[TwitterCrawler._get_tweet_media] Error downloading media: {e}")
+
+    async def _fetch_tweet_replies(self, tweet: TwitterTweet) -> None:
+        if not tweet or not tweet.id:
+            return
+        max_comments = max(0, int(config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES))
+        if max_comments <= 0:
+            return
+
+        cursor = None
+        fetched = 0
+        attempt = 0
+        while fetched < max_comments:
+            try:
+                result = await self.twitter_client.get_tweet_replies(
+                    tweet_id=tweet.id,
+                    cursor=cursor,
+                    count=min(20, max_comments - fetched),
+                )
+                replies: List[TwitterTweet] = result.get("tweets", [])
+                if not replies:
+                    break
+
+                replies_to_store = replies[: max_comments - fetched]
+                for reply in replies_to_store:
+                    comment_item = self._tweet_to_comment_item(reply, parent_comment_id=tweet.id)
+                    await twitter_store.update_twitter_tweet_comment(tweet.id, comment_item)
+                fetched += len(replies_to_store)
+                attempt = 0
+
+                if not result.get("has_more", False):
+                    break
+                cursor = result.get("cursor")
+                if not cursor:
+                    break
+                await safe_sleep()
+            except TwitterError as exc:
+                attempt += 1
+                utils.logger.error(
+                    f"[TwitterCrawler._fetch_tweet_replies] Error fetching replies for {tweet.id} "
+                    f"(attempt={attempt}): {exc}"
+                )
+                if attempt >= 3:
+                    break
+                await safe_sleep(calc_backoff_delay(attempt))
+
+    def _tweet_to_store_item(self, tweet: TwitterTweet) -> Dict[str, Any]:
+        media_list = [
+            {
+                "media_type": media.media_type,
+                "media_url": media.media_url,
+                "video_url": media.video_url,
+                "display_url": media.display_url,
+                "expanded_url": media.expanded_url,
+            }
+            for media in (tweet.media or [])
+        ]
+        return {
+            "id": tweet.id,
+            "id_str": tweet.id_str,
+            "text": tweet.text or "",
+            "created_at": tweet.created_at,
+            "user_id": tweet.user_id,
+            "screen_name": tweet.screen_name,
+            "name": tweet.name,
+            "reply_count": tweet.reply_count,
+            "retweet_count": tweet.retweet_count,
+            "favorite_count": tweet.favorite_count,
+            "bookmark_count": tweet.bookmark_count,
+            "quote_count": tweet.quote_count,
+            "view_count": tweet.view_count,
+            "lang": tweet.lang,
+            "source": tweet.source,
+            "in_reply_to_status_id": tweet.in_reply_to_status_id,
+            "in_reply_to_user_id": tweet.in_reply_to_user_id,
+            "in_reply_to_screen_name": tweet.in_reply_to_screen_name,
+            "is_quote_status": tweet.is_quote_status,
+            "quoted_status_id": tweet.quoted_status_id,
+            "retweeted_status_id": tweet.retweeted_status_id,
+            "possibly_sensitive": tweet.possibly_sensitive,
+            "tweet_url": tweet.tweet_url,
+            "hashtags": tweet.hashtags or [],
+            "media": media_list,
+        }
+
+    def _user_to_store_item(self, user: TwitterUser) -> Dict[str, Any]:
+        return {
+            "screen_name": user.screen_name,
+            "name": user.name,
+            "description": user.description,
+            "profile_image_url": user.profile_image_url,
+            "profile_banner_url": user.profile_banner_url,
+            "followers_count": user.followers_count,
+            "friends_count": user.friends_count,
+            "statuses_count": user.statuses_count,
+            "media_count": user.media_count,
+            "created_at": user.created_at,
+            "location": user.location,
+            "url": user.url,
+            "verified": user.verified,
+            "verified_type": user.verified_type,
+            "is_blue_verified": user.is_blue_verified,
+            "protected": user.protected,
+        }
+
+    def _tweet_to_comment_item(self, tweet: TwitterTweet, parent_comment_id: Optional[str] = None) -> Dict[str, Any]:
+        return {
+            "id": tweet.id,
+            "text": tweet.text or "",
+            "created_at": tweet.created_at,
+            "reply_count": tweet.reply_count,
+            "favorite_count": tweet.favorite_count,
+            "parent_comment_id": parent_comment_id,
+            "user": {
+                "id": tweet.user_id,
+                "screen_name": tweet.screen_name,
+                "name": tweet.name,
+            },
+        }
+
+    async def _save_tweet_media_bytes(
+        self,
+        tweet_id: str,
+        media_index: int,
+        media_type: str,
+        source_url: str,
+        content: bytes,
+    ) -> str:
+        ext = self._guess_media_extension(source_url, media_type)
+        base_dir = Path(config.SAVE_DATA_PATH) if config.SAVE_DATA_PATH else Path("data")
+        target_dir = base_dir / "twitter" / "media" / tweet_id
+        target_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"{media_index}_{media_type}{ext}"
+        file_path = target_dir / filename
+        await asyncio.to_thread(file_path.write_bytes, content)
+        return str(file_path)
+
+    @staticmethod
+    def _guess_media_extension(source_url: str, media_type: str) -> str:
+        parsed = urlparse(source_url or "")
+        suffix = Path(parsed.path).suffix.lower()
+        if suffix:
+            return suffix
+        if media_type in {"video", "animated_gif"}:
+            return ".mp4"
+        return ".jpg"
 
     def get_search_keywords(self) -> List[str]:
         """Get search keywords from config."""

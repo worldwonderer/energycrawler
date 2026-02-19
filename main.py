@@ -19,6 +19,7 @@
 
 import sys
 import io
+import os
 
 # Force UTF-8 encoding for stdout/stderr to prevent encoding errors
 # when outputting Chinese characters in non-UTF-8 terminals
@@ -37,6 +38,9 @@ import config
 from database import db
 from base.base_crawler import AbstractCrawler
 from tools.async_file_writer import AsyncFileWriter
+from tools import utils
+from tools.preflight import ensure_energy_service_or_raise
+from tools.safety import enforce_runtime_safety
 from var import crawler_type_var
 
 
@@ -98,11 +102,20 @@ async def main() -> None:
     global crawler
 
     args = await cmd_arg.parse_cmd()
+    enforce_runtime_safety()
+    utils.log_event(
+        "crawler.run.begin",
+        platform=config.PLATFORM,
+        crawler_type=config.CRAWLER_TYPE,
+        pid=os.getpid(),
+    )
     if args.init_db:
         await db.init_db(args.init_db)
         print(f"Database {args.init_db} initialized successfully.")
+        utils.log_event("crawler.run.init_db.complete", db=args.init_db)
         return
 
+    ensure_energy_service_or_raise()
     crawler = CrawlerFactory.create_crawler(platform=config.PLATFORM)
     await crawler.start()
 
@@ -111,6 +124,7 @@ async def main() -> None:
     # Generate wordcloud after crawling is complete
     # Only for JSON save mode
     await _generate_wordcloud_if_needed()
+    utils.log_event("crawler.run.complete", platform=config.PLATFORM, crawler_type=config.CRAWLER_TYPE)
 
 
 async def async_cleanup() -> None:

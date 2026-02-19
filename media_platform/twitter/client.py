@@ -369,6 +369,7 @@ class TwitterClient:
         query: str,
         search_type: str = "Latest",
         cursor: Optional[str] = None,
+        count: int = 20,
     ) -> List[TwitterTweet]:
         """
         Search tweets by query.
@@ -381,9 +382,10 @@ class TwitterClient:
         Returns:
             List of TwitterTweet objects
         """
+        normalized_count = self._normalize_count(count)
         variables = {
             "rawQuery": query,
-            "count": 20,
+            "count": normalized_count,
             "querySource": "typed_query",
             "product": search_type,
         }
@@ -396,9 +398,8 @@ class TwitterClient:
 
         data = await self._request("GET", "SearchTimeline", variables, features)
 
-        # Parse tweets from timeline
-        tweets = parse_tweets_from_timeline(data)
-        return tweets
+        page = self._build_timeline_page(data, normalized_count)
+        return page["tweets"]
 
     async def get_user_by_username(self, username: str) -> Optional[TwitterUser]:
         """
@@ -490,9 +491,10 @@ class TwitterClient:
     async def get_user_tweets(
         self,
         user_id: str,
+        count: int = 20,
         cursor: Optional[str] = None,
         include_replies: bool = False,
-    ) -> List[TwitterTweet]:
+    ) -> Dict[str, Any]:
         """
         Get user's tweets.
 
@@ -504,9 +506,10 @@ class TwitterClient:
         Returns:
             List of TwitterTweet objects
         """
+        normalized_count = self._normalize_count(count)
         variables = {
             "userId": user_id,
-            "count": 20,
+            "count": normalized_count,
             "includePromotedContent": True,
             "withQuickPromoteEligibilityTweetFields": True,
             "withVoice": True,
@@ -520,9 +523,7 @@ class TwitterClient:
 
         data = await self._request("GET", operation, variables)
 
-        # Parse tweets from timeline
-        tweets = parse_tweets_from_timeline(data)
-        return tweets
+        return self._build_timeline_page(data, normalized_count)
 
     async def get_user_media(
         self,
@@ -730,6 +731,104 @@ class TwitterClient:
                     return result
         return None
 
+    @staticmethod
+    def _normalize_count(count: int) -> int:
+        try:
+            normalized = int(count)
+        except (TypeError, ValueError):
+            normalized = 20
+        return max(1, min(normalized, 100))
+
+    def _iter_timeline_entries(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        entries: List[Dict[str, Any]] = []
+        instructions = self._find_nested_key(data, "instructions") or []
+        if not instructions:
+            instructions = data.get("timeline", {}).get("instructions", [])
+
+        for instruction in instructions:
+            if not isinstance(instruction, dict):
+                continue
+            instruction_entries = instruction.get("entries", [])
+            if not instruction_entries and instruction.get("type") == "TimelineAddEntries":
+                instruction_entries = instruction.get("entry", [])
+            if isinstance(instruction_entries, dict):
+                instruction_entries = [instruction_entries]
+            for entry in instruction_entries:
+                if isinstance(entry, dict):
+                    entries.append(entry)
+        return entries
+
+    def _extract_cursor_from_timeline(self, data: Dict[str, Any]) -> Optional[str]:
+        preferred: List[str] = []
+        fallback: List[str] = []
+
+        for entry in self._iter_timeline_entries(data):
+            entry_id = str(entry.get("entryId", ""))
+            content = entry.get("content", {})
+            if not isinstance(content, dict):
+                continue
+
+            payload_candidates = [content]
+            item_content = content.get("itemContent")
+            if isinstance(item_content, dict):
+                payload_candidates.append(item_content)
+
+            operation = content.get("operation")
+            if isinstance(operation, dict):
+                op_cursor = operation.get("cursor")
+                if isinstance(op_cursor, dict):
+                    payload_candidates.append({
+                        "entryType": "TimelineTimelineCursor",
+                        "cursorType": op_cursor.get("cursorType"),
+                        "value": op_cursor.get("value"),
+                    })
+
+            for payload in payload_candidates:
+                if payload.get("entryType") != "TimelineTimelineCursor":
+                    continue
+                value = str(payload.get("value", "")).strip()
+                if not value:
+                    continue
+                cursor_type = str(payload.get("cursorType") or payload.get("valueType") or "").strip()
+                if cursor_type in {"Bottom", "ShowMore", "ShowMoreThreads"} or entry_id.startswith("cursor-bottom"):
+                    preferred.append(value)
+                else:
+                    fallback.append(value)
+
+        if preferred:
+            return preferred[0]
+        if fallback:
+            return fallback[0]
+        return None
+
+    def _build_timeline_page(
+        self,
+        data: Dict[str, Any],
+        count: int,
+        *,
+        exclude_tweet_id: str = "",
+    ) -> Dict[str, Any]:
+        tweets = parse_tweets_from_timeline(data)
+        deduped: List[TwitterTweet] = []
+        seen_ids: set[str] = set()
+        for tweet in tweets:
+            tweet_id = tweet.id or ""
+            if not tweet_id or tweet_id in seen_ids:
+                continue
+            if exclude_tweet_id and tweet_id == exclude_tweet_id:
+                continue
+            seen_ids.add(tweet_id)
+            deduped.append(tweet)
+
+        normalized_count = self._normalize_count(count)
+        selected = deduped[:normalized_count]
+        cursor = self._extract_cursor_from_timeline(data)
+        return {
+            "tweets": selected,
+            "cursor": cursor,
+            "has_more": bool(cursor),
+        }
+
     # ==================== Convenience Methods ====================
 
     async def search_tweets(
@@ -751,13 +850,54 @@ class TwitterClient:
         Returns:
             Dictionary with tweets and pagination info
         """
-        tweets = await self.search(query, search_type, cursor)
-
-        return {
-            "tweets": tweets,
-            "cursor": cursor,
-            "has_more": len(tweets) >= count,
+        normalized_count = self._normalize_count(count)
+        variables = {
+            "rawQuery": query,
+            "count": normalized_count,
+            "querySource": "typed_query",
+            "product": search_type,
         }
+        if cursor:
+            variables["cursor"] = cursor
+
+        features = GQL_FEATURES.copy()
+        features["responsive_web_search_deduplication_tiles_enabled"] = False
+        data = await self._request("GET", "SearchTimeline", variables, features)
+        return self._build_timeline_page(data, normalized_count)
+
+    async def get_tweet_replies(
+        self,
+        tweet_id: str,
+        cursor: Optional[str] = None,
+        count: int = 20,
+    ) -> Dict[str, Any]:
+        """
+        Get replies for a tweet via TweetDetail timeline.
+
+        Args:
+            tweet_id: Parent tweet ID
+            cursor: Pagination cursor
+            count: Number of replies to return
+
+        Returns:
+            Dictionary with replies and pagination info
+        """
+        normalized_count = self._normalize_count(count)
+        variables = {
+            "focalTweetId": tweet_id,
+            "with_rux_injections": False,
+            "includePromotedContent": True,
+            "withCommunity": True,
+            "withQuickPromoteEligibilityTweetFields": True,
+            "withBirdwatchNotes": True,
+            "withVoice": True,
+            "withV2Timeline": True,
+        }
+        if cursor:
+            variables["cursor"] = cursor
+
+        data = await self._request("GET", "TweetDetail", variables)
+        return self._build_timeline_page(data, normalized_count, exclude_tweet_id=tweet_id)
 
     async def get_tweet_by_id(self, tweet_id: str) -> Optional[TwitterTweet]:
         """
@@ -823,11 +963,13 @@ class TwitterClient:
         cursor = None
 
         while len(result) < max_count:
-            tweets = await self.get_user_tweets(
+            page = await self.get_user_tweets(
                 user_id,
+                count=min(20, max_count - len(result)),
                 cursor=cursor,
                 include_replies=include_replies,
             )
+            tweets = page.get("tweets", [])
 
             if not tweets:
                 break
@@ -841,10 +983,9 @@ class TwitterClient:
 
             result.extend(tweets_to_add)
 
-            # Get cursor for next page
-            # For now, we break after first page as cursor extraction is complex
-            # TODO: Extract cursor from response for proper pagination
-            break
+            cursor = page.get("cursor")
+            if not page.get("has_more") or not cursor:
+                break
 
             await asyncio.sleep(crawl_interval)
 
@@ -875,11 +1016,13 @@ class TwitterClient:
         cursor = None
 
         while len(result) < max_count:
-            tweets = await self.search(
-                query,
+            page = await self.search_tweets(
+                query=query,
                 search_type=search_type,
                 cursor=cursor,
+                count=min(20, max_count - len(result)),
             )
+            tweets = page.get("tweets", [])
 
             if not tweets:
                 break
@@ -893,10 +1036,9 @@ class TwitterClient:
 
             result.extend(tweets_to_add)
 
-            # Get cursor for next page
-            # For now, we break after first page as cursor extraction is complex
-            # TODO: Extract cursor from response for proper pagination
-            break
+            cursor = page.get("cursor")
+            if not page.get("has_more") or not cursor:
+                break
 
             await asyncio.sleep(crawl_interval)
 

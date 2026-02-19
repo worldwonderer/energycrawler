@@ -54,7 +54,7 @@ _load_project_env()
 PLATFORM = "xhs"  # Platform, xhs | x
 KEYWORDS = "编程副业,编程兼职"  # Keyword search configuration, separated by English commas
 LOGIN_TYPE = "cookie"  # cookie only
-COOKIES = ""
+COOKIES = os.getenv("COOKIES", "").strip()
 CRAWLER_TYPE = (
     "search"  # Crawling type, search (keyword search) | detail (post details) | creator (creator homepage data)
 )
@@ -144,6 +144,15 @@ FONT_PATH = "./docs/STZHONGS.TTF"
 
 # Crawl interval
 CRAWLER_MAX_SLEEP_SEC = 10
+
+# ==================== Safety Controls ====================
+# Hard safety ceilings to reduce account risk for small-batch crawling.
+CRAWLER_HARD_MAX_NOTES_COUNT = int(os.getenv("CRAWLER_HARD_MAX_NOTES_COUNT", "20"))
+CRAWLER_HARD_MAX_CONCURRENCY = int(os.getenv("CRAWLER_HARD_MAX_CONCURRENCY", "2"))
+CRAWLER_MIN_SLEEP_SEC = float(os.getenv("CRAWLER_MIN_SLEEP_SEC", "6"))
+CRAWLER_SLEEP_JITTER_SEC = float(os.getenv("CRAWLER_SLEEP_JITTER_SEC", "1.2"))
+CRAWLER_RETRY_BASE_DELAY_SEC = float(os.getenv("CRAWLER_RETRY_BASE_DELAY_SEC", "2"))
+CRAWLER_RETRY_MAX_DELAY_SEC = float(os.getenv("CRAWLER_RETRY_MAX_DELAY_SEC", "30"))
 
 # =================================== Twitter/X.com Configuration ===================================
 

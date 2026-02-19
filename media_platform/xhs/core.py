@@ -27,7 +27,6 @@ Usage:
 """
 
 import asyncio
-import random
 from typing import Dict, List, Optional, Any
 
 import config
@@ -36,6 +35,7 @@ from model.m_xiaohongshu import NoteUrlInfo, CreatorUrlInfo
 from proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
 from store import xhs as xhs_store
 from tools import utils
+from tools.safety import safe_sleep
 from var import crawler_type_var, source_keyword_var
 
 try:
@@ -72,6 +72,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
         self.user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36"
         self.ip_proxy_pool = None
         self.energy_adapter = None
+        self._cookie_header = getattr(config, "COOKIES", "")
 
     async def start(self) -> None:
         """启动爬虫"""
@@ -134,6 +135,26 @@ class XiaoHongShuCrawler(AbstractCrawler):
         # 导航到小红书
         self.energy_adapter.browser.navigate(browser_id, "https://www.xiaohongshu.com", 30000)
 
+        # 如果配置了 COOKIES，优先注入到 Energy 浏览器会话，避免每次重启都需手动登录。
+        if self._cookie_header:
+            cookie_map = utils.convert_str_cookie_to_dict(self._cookie_header)
+            cookie_items = [
+                {
+                    "name": key,
+                    "value": value,
+                    "domain": ".xiaohongshu.com",
+                    "path": "/",
+                    "secure": True,
+                    "httpOnly": False,
+                }
+                for key, value in cookie_map.items()
+            ]
+            if cookie_items:
+                injected = self.energy_adapter.set_cookies(cookie_items, domain=".xiaohongshu.com")
+                utils.logger.info(
+                    f"[XiaoHongShuCrawler] Injected cookies from config (count={len(cookie_items)}, success={injected})"
+                )
+
         # 等待页面加载
         await asyncio.sleep(3)
 
@@ -143,6 +164,8 @@ class XiaoHongShuCrawler(AbstractCrawler):
         """创建 XHS 客户端"""
         # 从 Energy 获取 Cookie
         cookie_dict = self.energy_adapter.get_cookies()
+        if not cookie_dict and self._cookie_header:
+            cookie_dict = utils.convert_str_cookie_to_dict(self._cookie_header)
         cookie_str = "; ".join([f"{k}={v}" for k, v in cookie_dict.items()])
 
         client = XiaoHongShuClient(
@@ -244,7 +267,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
                     await self.batch_get_note_comments(note_ids, xsec_tokens)
                     if fetched_note_count >= target_note_count or not notes_res.get("has_more", False):
                         break
-                    await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
+                    await safe_sleep()
 
                 except DataFetchError:
                     utils.logger.error("[XiaoHongShuCrawler.search] Get note detail error")
@@ -360,7 +383,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 return None
             finally:
                 # Keep low request rate for account safety.
-                await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
+                await safe_sleep()
 
     async def batch_get_note_comments(self, note_ids: List[str], xsec_tokens: List[str]) -> None:
         """批量获取笔记评论"""
@@ -409,7 +432,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
                     cursor = comments_res.get("cursor", "")
                     if not cursor:
                         break
-                    await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
+                    await safe_sleep()
             except DataFetchError as ex:
                 utils.logger.error(f"[XiaoHongShuCrawler.get_note_comments] Get comments error: {ex}")
 
@@ -464,7 +487,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
             if not url:
                 continue
             content = await self.xhs_client.get_note_media(url)
-            await asyncio.sleep(random.random())
+            await safe_sleep(1.0)
             if content is None:
                 continue
             extension_file_name = f"{pic_num}.jpg"
@@ -477,7 +500,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
             video_num = 0
             for url in videos:
                 content = await self.xhs_client.get_note_media(url)
-                await asyncio.sleep(random.random())
+                await safe_sleep(1.0)
                 if content is None:
                     continue
                 extension_file_name = f"{video_num}.mp4"

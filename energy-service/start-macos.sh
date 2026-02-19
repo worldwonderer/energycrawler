@@ -10,6 +10,58 @@ cd "$SCRIPT_DIR"
 APP_NAME="energy-service"
 APP_BUNDLE="${APP_NAME}.app"
 PLIST_PATH="${APP_BUNDLE}/Contents/Info.plist"
+SERVICE_PORT="50051"
+
+cleanup_stale_processes() {
+    echo "Cleaning stale Energy service processes..."
+
+    local stale_pids
+    stale_pids="$(
+        {
+            pgrep -f "$SCRIPT_DIR/$APP_NAME" || true
+            pgrep -f "$SCRIPT_DIR/$APP_BUNDLE/Contents/MacOS/$APP_NAME" || true
+            pgrep -f "$SCRIPT_DIR/energy-server" || true
+        } | sort -u
+    )"
+
+    if [ -n "$stale_pids" ]; then
+        echo "$stale_pids" | while IFS= read -r pid; do
+            [ -z "$pid" ] && continue
+            if [ "$pid" = "$$" ] || [ "$pid" = "$PPID" ]; then
+                continue
+            fi
+            kill "$pid" 2>/dev/null || true
+        done
+
+        sleep 1
+
+        echo "$stale_pids" | while IFS= read -r pid; do
+            [ -z "$pid" ] && continue
+            if kill -0 "$pid" 2>/dev/null; then
+                kill -9 "$pid" 2>/dev/null || true
+            fi
+        done
+    fi
+
+    local port_pids
+    port_pids="$(lsof -ti "tcp:${SERVICE_PORT}" -sTCP:LISTEN 2>/dev/null | sort -u || true)"
+    if [ -n "$port_pids" ]; then
+        echo "Cleaning listeners on port ${SERVICE_PORT}: $port_pids"
+        echo "$port_pids" | while IFS= read -r pid; do
+            [ -z "$pid" ] && continue
+            kill "$pid" 2>/dev/null || true
+        done
+        sleep 1
+        echo "$port_pids" | while IFS= read -r pid; do
+            [ -z "$pid" ] && continue
+            if kill -0 "$pid" 2>/dev/null; then
+                kill -9 "$pid" 2>/dev/null || true
+            fi
+        done
+    fi
+}
+
+cleanup_stale_processes
 
 # Check if binary exists
 if [ ! -f "$APP_NAME" ]; then
@@ -75,8 +127,8 @@ fi
 
 # Wait a moment and check if service is running
 sleep 3
-if lsof -i :50051 > /dev/null 2>&1; then
-    echo "Energy service started successfully on port 50051"
+if lsof -i :"${SERVICE_PORT}" > /dev/null 2>&1; then
+    echo "Energy service started successfully on port ${SERVICE_PORT}"
 else
     echo "Warning: Service may not be running. Check Console.app for crash logs."
 fi

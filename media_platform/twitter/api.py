@@ -29,7 +29,8 @@ PUBLIC_BEARER_TOKEN = "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8
 
 # GraphQL operation IDs
 OPERATIONS: Dict[str, str] = {
-    "SearchTimeline": "AIdc203rPpK_k_2KWSdm7g/SearchTimeline",
+    # Keep SearchTimeline query id aligned with X web bundle.
+    "SearchTimeline": "cGK-Qeg1XJc2sZ6kgQw_Iw/SearchTimeline",
     "UserByScreenName": "1VOOyvKkiI3FMmkeDNxM9A/UserByScreenName",
     "UserByRestId": "WJ7rCtezBVT6nk6VM5R8Bw/UserByRestId",
     "TweetDetail": "_8aYOgEDz35BrBcBal1-_w/TweetDetail",
