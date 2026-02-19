@@ -28,14 +28,20 @@ ENERGY_DEBUG_PORT=9222 bash start-macos.sh
 ### 验证服务状态
 
 ```bash
-# 检查进程
-ps aux | grep energy-service | grep -v grep
-
-# 检查端口
-lsof -i :50051
+uv run python scripts/energy_service_healthcheck.py --host localhost --port 50051
 ```
 
-服务启动后会监听 `localhost:50051` 端口。
+如果检查失败，使用自动重启脚本：
+
+```bash
+bash scripts/ensure_energy_service.sh --port 50051
+```
+
+低层排查命令（仅在需要时）：
+
+```bash
+lsof -nP -iTCP:50051 -sTCP:LISTEN
+```
 
 ## 核心功能
 

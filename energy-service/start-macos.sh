@@ -2,7 +2,7 @@
 # Energy Service Launcher for macOS
 # Handles code signing and proper app bundle launch
 
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -11,6 +11,45 @@ APP_NAME="energy-service"
 APP_BUNDLE="${APP_NAME}.app"
 PLIST_PATH="${APP_BUNDLE}/Contents/Info.plist"
 SERVICE_PORT="50051"
+LOG_PATH="/tmp/energy-service.log"
+
+is_port_listening() {
+    lsof -nP -iTCP:"${SERVICE_PORT}" -sTCP:LISTEN >/dev/null 2>&1
+}
+
+print_failure_diagnostics() {
+    echo
+    echo "===== Startup diagnostics ====="
+    echo "Expected listen port: ${SERVICE_PORT}"
+    echo "Working directory: ${SCRIPT_DIR}"
+
+    echo
+    echo "Port owner snapshot:"
+    if ! lsof -nP -iTCP:"${SERVICE_PORT}" -sTCP:LISTEN; then
+        echo "(no listener found on ${SERVICE_PORT})"
+    fi
+
+    echo
+    echo "Energy-related processes:"
+    if ! pgrep -fal "$APP_NAME|energy-server"; then
+        echo "(no energy-related process found)"
+    fi
+
+    echo
+    if [ -f "$LOG_PATH" ]; then
+        echo "Recent fallback log (${LOG_PATH}):"
+        tail -n 40 "$LOG_PATH" || true
+    else
+        echo "Fallback log file not found: ${LOG_PATH}"
+    fi
+
+    echo
+    echo "Suggested next steps:"
+    echo "1) Retry guarded startup: bash ${SCRIPT_DIR}/../scripts/ensure_energy_service.sh"
+    echo "2) Run health check: uv run python ${SCRIPT_DIR}/../scripts/energy_service_healthcheck.py --host localhost --port ${SERVICE_PORT}"
+    echo "3) If launching from terminal, ensure current user session has GUI permissions (Finder/login session)."
+    echo "==============================="
+}
 
 cleanup_stale_processes() {
     echo "Cleaning stale Energy service processes..."
@@ -122,13 +161,24 @@ codesign --force --deep --sign - "$APP_BUNDLE" 2>/dev/null || true
 echo "Starting $APP_BUNDLE..."
 if ! open -n "$APP_BUNDLE"; then
     echo "Warning: 'open' failed (likely no GUI session). Falling back to direct binary launch."
-    nohup "$APP_BUNDLE/Contents/MacOS/$APP_NAME" >/tmp/energy-service.log 2>&1 &
+    nohup "$APP_BUNDLE/Contents/MacOS/$APP_NAME" >"$LOG_PATH" 2>&1 &
+    echo "Fallback log: $LOG_PATH"
 fi
 
-# Wait a moment and check if service is running
-sleep 3
-if lsof -i :"${SERVICE_PORT}" > /dev/null 2>&1; then
+# Wait and check if service is running
+startup_ok=0
+for _ in $(seq 1 12); do
+    if is_port_listening; then
+        startup_ok=1
+        break
+    fi
+    sleep 1
+done
+
+if [ "$startup_ok" -eq 1 ]; then
     echo "Energy service started successfully on port ${SERVICE_PORT}"
 else
-    echo "Warning: Service may not be running. Check Console.app for crash logs."
+    echo "ERROR: Energy service did not start on port ${SERVICE_PORT}"
+    print_failure_diagnostics
+    exit 1
 fi

@@ -47,11 +47,18 @@ go build -o energy-service
 ### Run
 
 ```bash
-# Default port 50051
-./energy-service
+# Start with macOS launcher
+bash start-macos.sh
+```
 
-# Custom port
-GRPC_PORT=:50052 ./energy-service
+```bash
+# Recommended: guarded start + auto-restart from project root
+bash scripts/ensure_energy_service.sh
+```
+
+```bash
+# Health check from project root
+uv run python scripts/energy_service_healthcheck.py --host localhost --port 50051
 ```
 
 ## API

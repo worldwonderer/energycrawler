@@ -39,10 +39,16 @@ CRAWLER_MAX_WORKERS=2
 uv sync
 ```
 
-### 2. 启动 Energy 服务
+### 2. 启动 Energy 服务（推荐自动保活）
 
 ```bash
-bash energy-service/start-macos.sh
+bash scripts/ensure_energy_service.sh
+```
+
+手动健康检查：
+
+```bash
+uv run python scripts/energy_service_healthcheck.py --host localhost --port 50051
 ```
 
 ### 3. 配置参数
@@ -70,6 +76,12 @@ uv run python scripts/export_cookies_to_env.py --platform all --xhs-browser-id m
 ```bash
 uv run python scripts/check_login_state.py --host localhost --port 50051
 ```
+
+服务拉起相关环境变量：
+
+- `ENERGY_ENSURE_RETRIES`：最大重试次数（默认 `3`）
+- `ENERGY_ENSURE_SLEEP_SEC`：重试间隔秒数（默认 `2`）
+- `ENERGY_HEALTHCHECK_TIMEOUT`：单次检查超时（默认 `8` 秒）
 
 ### 4. 运行 CLI
 
