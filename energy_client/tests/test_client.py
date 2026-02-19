@@ -350,23 +350,6 @@ class TestBrowserClient:
         call_args = mock_browser_stub.ExecuteSignature.call_args[0][0]
         assert call_args.platform == 'xhs'
 
-    def test_execute_signature_douyin(self, browser_client, mock_browser_stub):
-        """Test executing signature for Douyin platform"""
-        mock_response = MagicMock()
-        mock_response.success = True
-        mock_response.signatures = {'_signature': 'sig456', 'X-Bogus': 'bogus123'}
-        mock_browser_stub.ExecuteSignature.return_value = mock_response
-
-        browser_client.connect()
-        signatures = browser_client.execute_signature(
-            'test-browser',
-            'douyin',
-            'https://douyin.com'
-        )
-
-        assert '_signature' in signatures
-        assert 'X-Bogus' in signatures
-
     def test_execute_signature_unsupported(self, browser_client, mock_browser_stub):
         """Test executing signature for unsupported platform"""
         mock_response = MagicMock()

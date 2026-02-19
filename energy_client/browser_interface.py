@@ -139,7 +139,7 @@ class BrowserInterface(ABC):
 
         Args:
             browser_id: The ID of the browser
-            platform: Platform name (e.g., "xhs", "douyin")
+            platform: Platform name (supported: "xhs")
             url: The URL to generate signatures for
 
         Returns:

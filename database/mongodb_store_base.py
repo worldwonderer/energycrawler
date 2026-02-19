@@ -91,7 +91,7 @@ class MongoDBStoreBase:
     def __init__(self, collection_prefix: str):
         """Initialize storage base class
         Args:
-            collection_prefix: Platform prefix (xhs/douyin/bilibili, etc.)
+            collection_prefix: Platform prefix (e.g., xhs/x)
         """
         self.collection_prefix = collection_prefix
         self._connection = MongoDBConnection()

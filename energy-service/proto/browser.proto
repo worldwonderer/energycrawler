@@ -117,7 +117,7 @@ message SetProxyResponse {
 
 message ExecuteSignatureRequest {
     string browser_id = 1;
-    string platform = 2;  // e.g., "xhs", "douyin"
+    string platform = 2;  // e.g., "xhs"
     string url = 3;
 }
 

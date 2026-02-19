@@ -145,48 +145,6 @@ func TestGetSignatureHandler(t *testing.T) {
 			expectedName:  "xhs",
 		},
 		{
-			name:          "Douyin platform handler",
-			platform:      "douyin",
-			expectHandler: true,
-			expectedName:  "douyin",
-		},
-		{
-			name:          "TikTok alias",
-			platform:      "tiktok",
-			expectHandler: true,
-			expectedName:  "douyin",
-		},
-		{
-			name:          "Bilibili platform handler",
-			platform:      "bilibili",
-			expectHandler: true,
-			expectedName:  "bilibili",
-		},
-		{
-			name:          "Kuaishou platform handler",
-			platform:      "kuaishou",
-			expectHandler: true,
-			expectedName:  "kuaishou",
-		},
-		{
-			name:          "Weibo platform handler",
-			platform:      "weibo",
-			expectHandler: true,
-			expectedName:  "weibo",
-		},
-		{
-			name:          "Tieba platform handler",
-			platform:      "tieba",
-			expectHandler: true,
-			expectedName:  "tieba",
-		},
-		{
-			name:          "Zhihu platform handler",
-			platform:      "zhihu",
-			expectHandler: true,
-			expectedName:  "zhihu",
-		},
-		{
 			name:          "Unknown platform",
 			platform:      "unknown",
 			expectHandler: false,
@@ -275,16 +233,6 @@ func TestPlatformSignatureHandler(t *testing.T) {
 			platform: "xhs",
 			url:      "https://www.xiaohongshu.com/api/sns/web/v1/search/notes",
 		},
-		{
-			name:     "Douyin handler",
-			platform: "douyin",
-			url:      "https://www.douyin.com/api/test",
-		},
-		{
-			name:     "Bilibili handler",
-			platform: "bilibili",
-			url:      "https://api.bilibili.com/x/web-interface/view",
-		},
 	}
 
 	for _, tt := range tests {
@@ -315,12 +263,6 @@ func TestSignatureHandlerPlatformNames(t *testing.T) {
 		status string
 	}{
 		{"xhs", "xhs", "implemented"},
-		{"douyin", "douyin", "not_implemented"},
-		{"bilibili", "bilibili", "not_implemented"},
-		{"kuaishou", "kuaishou", "not_implemented"},
-		{"weibo", "weibo", "not_implemented"},
-		{"tieba", "tieba", "not_implemented"},
-		{"zhihu", "zhihu", "not_implemented"},
 	}
 
 	for _, p := range platforms {
@@ -340,7 +282,7 @@ func TestSignatureHandlerPlatformNames(t *testing.T) {
 func TestAllPlatformSignatures(t *testing.T) {
 	mgr := browser.NewManager()
 
-	platforms := []string{"xhs", "douyin", "bilibili", "kuaishou", "weibo", "tieba", "zhihu"}
+	platforms := []string{"xhs"}
 
 	for _, platform := range platforms {
 		t.Run(platform, func(t *testing.T) {

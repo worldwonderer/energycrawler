@@ -61,18 +61,6 @@ func GetSignatureHandler(platform string) PlatformSignatureHandler {
 	switch platform {
 	case "xhs", "xiaohongshu":
 		return &XHSSignatureHandler{}
-	case "douyin", "tiktok":
-		return &DouyinSignatureHandler{}
-	case "bilibili":
-		return &BilibiliSignatureHandler{}
-	case "kuaishou":
-		return &KuaishouSignatureHandler{}
-	case "weibo":
-		return &WeiboSignatureHandler{}
-	case "tieba":
-		return &TiebaSignatureHandler{}
-	case "zhihu":
-		return &ZhihuSignatureHandler{}
 	default:
 		return nil
 	}
@@ -150,96 +138,6 @@ func (h *XHSSignatureHandler) GenerateSignatures(url string, browserWindow cef.I
 	case <-time.After(15 * time.Second):
 		return nil, fmt.Errorf("signature generation timeout")
 	}
-}
-
-// DouyinSignatureHandler handles Douyin signature generation
-type DouyinSignatureHandler struct{}
-
-func (h *DouyinSignatureHandler) GetPlatformName() string {
-	return "douyin"
-}
-
-func (h *DouyinSignatureHandler) GenerateSignatures(url string, browserWindow cef.IBrowserWindow) (map[string]string, error) {
-	// TODO: Implement Douyin signature generation
-	return map[string]string{
-		"platform": "douyin",
-		"status":   "not_implemented",
-	}, nil
-}
-
-// BilibiliSignatureHandler handles Bilibili signature generation
-type BilibiliSignatureHandler struct{}
-
-func (h *BilibiliSignatureHandler) GetPlatformName() string {
-	return "bilibili"
-}
-
-func (h *BilibiliSignatureHandler) GenerateSignatures(url string, browserWindow cef.IBrowserWindow) (map[string]string, error) {
-	// TODO: Implement Bilibili signature generation
-	return map[string]string{
-		"platform": "bilibili",
-		"status":   "not_implemented",
-	}, nil
-}
-
-// KuaishouSignatureHandler handles Kuaishou signature generation
-type KuaishouSignatureHandler struct{}
-
-func (h *KuaishouSignatureHandler) GetPlatformName() string {
-	return "kuaishou"
-}
-
-func (h *KuaishouSignatureHandler) GenerateSignatures(url string, browserWindow cef.IBrowserWindow) (map[string]string, error) {
-	// TODO: Implement Kuaishou signature generation
-	return map[string]string{
-		"platform": "kuaishou",
-		"status":   "not_implemented",
-	}, nil
-}
-
-// WeiboSignatureHandler handles Weibo signature generation
-type WeiboSignatureHandler struct{}
-
-func (h *WeiboSignatureHandler) GetPlatformName() string {
-	return "weibo"
-}
-
-func (h *WeiboSignatureHandler) GenerateSignatures(url string, browserWindow cef.IBrowserWindow) (map[string]string, error) {
-	// TODO: Implement Weibo signature generation
-	return map[string]string{
-		"platform": "weibo",
-		"status":   "not_implemented",
-	}, nil
-}
-
-// TiebaSignatureHandler handles Tieba signature generation
-type TiebaSignatureHandler struct{}
-
-func (h *TiebaSignatureHandler) GetPlatformName() string {
-	return "tieba"
-}
-
-func (h *TiebaSignatureHandler) GenerateSignatures(url string, browserWindow cef.IBrowserWindow) (map[string]string, error) {
-	// TODO: Implement Tieba signature generation
-	return map[string]string{
-		"platform": "tieba",
-		"status":   "not_implemented",
-	}, nil
-}
-
-// ZhihuSignatureHandler handles Zhihu signature generation
-type ZhihuSignatureHandler struct{}
-
-func (h *ZhihuSignatureHandler) GetPlatformName() string {
-	return "zhihu"
-}
-
-func (h *ZhihuSignatureHandler) GenerateSignatures(url string, browserWindow cef.IBrowserWindow) (map[string]string, error) {
-	// TODO: Implement Zhihu signature generation
-	return map[string]string{
-		"platform": "zhihu",
-		"status":   "not_implemented",
-	}, nil
 }
 
 // Helper functions

@@ -4,7 +4,7 @@
 - `xhs` (小红书)
 - `x` (X / Twitter)
 
-当前分支已经移除 `douyin / kuaishou / bilibili / weibo / tieba / zhihu` 相关爬虫与存储实现，不再做向后兼容。
+当前分支已移除非目标站点相关爬虫与存储实现，不再做向后兼容。
 
 ## 当前定位
 
@@ -17,10 +17,7 @@
 
 - 平台枚举已收敛为：`xhs | x`
 - 主入口 `CrawlerFactory` 仅保留 `xhs` 与 `x`（兼容 `twitter` 别名）
-- 已删除非目标平台目录：
-  - `media_platform/{douyin,kuaishou,bilibili,weibo,tieba,zhihu}`
-  - `store/{douyin,kuaishou,bilibili,weibo,tieba,zhihu}`
-  - `config/{dy_config,ks_config,bilibili_config,weibo_config,tieba_config,zhihu_config}.py`
+- 已删除非目标平台目录与配置（仅保留 `xhs` 与 `x` 运行链路）
 - API 平台配置接口仅返回 `xhs` 与 `x`
 
 ## 环境要求

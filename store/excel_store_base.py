@@ -134,7 +134,7 @@ class ExcelStoreBase(AbstractStore):
         self.contacts_headers_written = False
         self.dynamics_headers_written = False
 
-        # Optional sheets for platforms that need them (e.g., Bilibili)
+        # Optional sheets for platforms that need extra relational data
         self.contacts_sheet = None
         self.dynamics_sheet = None
 
@@ -298,7 +298,7 @@ class ExcelStoreBase(AbstractStore):
 
     async def store_contact(self, contact_item: Dict):
         """
-        Store contact data to Excel (for platforms like Bilibili)
+        Store contact data to Excel
 
         Args:
             contact_item: Contact data dictionary
@@ -322,7 +322,7 @@ class ExcelStoreBase(AbstractStore):
 
     async def store_dynamic(self, dynamic_item: Dict):
         """
-        Store dynamic data to Excel (for platforms like Bilibili)
+        Store dynamic data to Excel
 
         Args:
             dynamic_item: Dynamic data dictionary

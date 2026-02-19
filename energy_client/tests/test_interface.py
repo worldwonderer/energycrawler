@@ -431,25 +431,18 @@ class TestEnergyBrowserBackend:
             assert 'x-t' in sigs
             mock_client.execute_signature.assert_called_once()
 
-    def test_execute_signature_multiple_platforms(self):
-        """Test execute_signature for different platforms"""
-        platforms = [
-            ('xhs', {'x-s': 'xhs_sig', 'x-t': 'time'}),
-            ('douyin', {'_signature': 'dy_sig', 'X-Bogus': 'bogus'}),
-            ('bilibili', {'buvid3': 'bili_sig'}),
-        ]
+    def test_execute_signature_single_platform(self):
+        """Test execute_signature for xhs"""
+        with patch.object(client_module, 'BrowserClient') as mock_client_class:
+            mock_client = MagicMock()
+            mock_client.execute_signature.return_value = {'x-s': 'xhs_sig', 'x-t': 'time'}
+            mock_client_class.return_value = mock_client
 
-        for platform, expected_sigs in platforms:
-            with patch.object(client_module, 'BrowserClient') as mock_client_class:
-                mock_client = MagicMock()
-                mock_client.execute_signature.return_value = expected_sigs
-                mock_client_class.return_value = mock_client
+            backend = EnergyBrowserBackend('localhost', 50051)
+            backend.connect()
 
-                backend = EnergyBrowserBackend('localhost', 50051)
-                backend.connect()
-
-                sigs = backend.execute_signature('test-id', platform, 'https://example.com')
-                assert sigs == expected_sigs
+            sigs = backend.execute_signature('test-id', 'xhs', 'https://example.com')
+            assert sigs == {'x-s': 'xhs_sig', 'x-t': 'time'}
 
 
 class TestCreateBrowserBackend:

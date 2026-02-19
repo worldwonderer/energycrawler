@@ -32,11 +32,11 @@ def generate_browser_id(platform: str, prefix: Optional[str] = None) -> str:
     """Generate unique browser ID for a platform.
 
     Args:
-        platform: Platform name (e.g., "xhs", "douyin", "bilibili")
+        platform: Platform name (e.g., "xhs", "x")
         prefix: Optional prefix. If None, uses config.ENERGY_BROWSER_ID_PREFIX
 
     Returns:
-        Browser ID string like "energycrawler_douyin"
+        Browser ID string like "energycrawler_xhs"
     """
     p = prefix or config.ENERGY_BROWSER_ID_PREFIX
     return f"{p}_{platform}"
@@ -52,7 +52,7 @@ def create_energy_adapter(
     """Create and return an Energy adapter for the specified platform.
 
     Args:
-        platform: Platform name ("xhs", "douyin", "bilibili", "tieba", "weibo", "kuaishou", "zhihu")
+        platform: Platform name ("xhs" or "x")
         host: Energy service host. If None, parsed from config.
         port: Energy service port. If None, parsed from config.
         browser_id: Browser ID. If None, generated from platform name.

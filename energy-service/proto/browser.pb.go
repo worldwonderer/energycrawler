@@ -877,7 +877,7 @@ func (x *SetProxyResponse) GetError() string {
 type ExecuteSignatureRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	BrowserId     string                 `protobuf:"bytes,1,opt,name=browser_id,json=browserId,proto3" json:"browser_id,omitempty"`
-	Platform      string                 `protobuf:"bytes,2,opt,name=platform,proto3" json:"platform,omitempty"` // e.g., "xhs", "douyin"
+	Platform      string                 `protobuf:"bytes,2,opt,name=platform,proto3" json:"platform,omitempty"` // e.g., "xhs"
 	Url           string                 `protobuf:"bytes,3,opt,name=url,proto3" json:"url,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
