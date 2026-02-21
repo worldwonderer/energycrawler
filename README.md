@@ -45,10 +45,22 @@ uv sync
 bash scripts/ensure_energy_service.sh
 ```
 
+统一入口（等价命令）：
+
+```bash
+python3 scripts/energy_service_cli.py ensure
+```
+
 手动健康检查：
 
 ```bash
 uv run python scripts/energy_service_healthcheck.py --host localhost --port 50051
+```
+
+统一入口（等价命令）：
+
+```bash
+python3 scripts/energy_service_cli.py check --host localhost --port 50051
 ```
 
 ### 3. 配置参数
@@ -71,10 +83,22 @@ uv run python scripts/energy_service_healthcheck.py --host localhost --port 5005
 uv run python scripts/export_cookies_to_env.py --platform all --xhs-browser-id manual_login_xhs --x-browser-id manual_login_x
 ```
 
+统一入口（等价命令）：
+
+```bash
+python3 scripts/auth_cli.py export --platform all --xhs-browser-id manual_login_xhs --x-browser-id manual_login_x
+```
+
 登录态快速检查：
 
 ```bash
 uv run python scripts/check_login_state.py --host localhost --port 50051
+```
+
+统一入口（等价命令）：
+
+```bash
+python3 scripts/auth_cli.py status --host localhost --port 50051
 ```
 
 XHS 也支持通过 API 触发 QR 登录并自动写回 `.env` 的 `COOKIES`：
@@ -99,6 +123,12 @@ curl -s -X POST http://localhost:8080/api/auth/xhs/qr/session/<session_id>/cance
 uv run python scripts/xhs_qr_login_flow.py --api-base http://localhost:8080
 ```
 
+统一入口（等价命令）：
+
+```bash
+python3 scripts/auth_cli.py xhs-qr-login --api-base http://localhost:8080
+```
+
 该脚本默认会把二维码页自动打开到对应 Energy 浏览器窗口，并提示扫码确认。  
 如不需要自动打开，可加 `--no-open-in-energy`。
 
@@ -108,6 +138,12 @@ uv run python scripts/xhs_qr_login_flow.py --api-base http://localhost:8080
 curl -s -X POST http://localhost:8080/api/auth/xhs/energy/sync \
   -H 'Content-Type: application/json' \
   -d '{"browser_id":"manual_login_xhs","verify_login":true}'
+```
+
+统一入口（等价命令）：
+
+```bash
+python3 scripts/auth_cli.py xhs-sync --api-base http://localhost:8080 --browser-id manual_login_xhs
 ```
 
 服务拉起相关环境变量：
