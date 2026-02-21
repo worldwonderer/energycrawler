@@ -130,8 +130,6 @@ for reply in replies:
 - `dom_extractor.py` - Main implementation
 - `example_dom_extractor.py` - Working examples
 - `DOM_EXTRACTOR_README.md` - Full documentation
-- `IMPLEMENTATION_SUMMARY.md` - Implementation details
-- `VERIFICATION_REPORT.md` - Verification status
 
 ## 📖 Full Documentation
 
