@@ -20,25 +20,29 @@
 ```bash
 cd EnergyCrawler
 uv sync
+cp .env.quickstart.example .env
 ```
 
 ### 3. 启动 Energy 服务
 
 ```bash
-bash energy-service/start-macos.sh
+python3 scripts/energycrawler_cli.py energy ensure
 ```
 
 ### 4. 运行爬虫
 
 ```bash
 # xhs 关键词搜索
-uv run main.py --platform xhs --lt qrcode --type search --keywords 编程副业,独立开发
+python3 scripts/energycrawler_cli.py crawl -- --platform xhs --lt cookie --type search --keywords 编程副业,独立开发
 
 # x 指定推文详情
-uv run main.py --platform x --lt cookie --type detail --specified_id 1890000000000000000
+python3 scripts/energycrawler_cli.py crawl -- --platform x --lt cookie --type detail --specified_id 1890000000000000000
 
 # 查看全部参数
-uv run main.py --help
+python3 scripts/energycrawler_cli.py crawl -- --help
+
+# 一键环境体检
+python3 scripts/energycrawler_cli.py doctor
 ```
 
 ## API 服务

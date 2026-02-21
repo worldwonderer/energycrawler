@@ -78,3 +78,15 @@ def test_ensure_energy_service_or_raise_raises_on_canary_fail(monkeypatch):
     monkeypatch.setattr(preflight, "run_xhs_signature_canary", lambda: (False, "canary failed"))
     with pytest.raises(RuntimeError):
         preflight.ensure_energy_service_or_raise("xhs")
+
+
+def test_ensure_energy_service_or_raise_validates_twitter_auth(monkeypatch):
+    monkeypatch.setattr(preflight, "check_energy_service_reachable", lambda timeout_sec=2.0: (True, "ok"))
+    monkeypatch.setattr(preflight.config, "TWITTER_AUTH_TOKEN", "", raising=False)
+    monkeypatch.setattr(preflight.config, "TWITTER_CT0", "", raising=False)
+    monkeypatch.setattr(preflight.config, "TWITTER_COOKIE", "", raising=False)
+    monkeypatch.setattr(preflight.config, "COOKIES", "", raising=False)
+    with pytest.raises(RuntimeError) as exc:
+        preflight.ensure_energy_service_or_raise("x")
+    assert "Missing Twitter auth material" in str(exc.value)
+    assert "Actionable next steps:" in str(exc.value)

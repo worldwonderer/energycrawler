@@ -22,7 +22,7 @@ SAVE_DATA_OPTION = "excel"
 
 ```bash
 # xhs 示例
-uv run main.py --platform xhs --lt qrcode --type search --save_data_option excel
+uv run main.py --platform xhs --lt cookie --type search --save_data_option excel
 
 # x 示例
 uv run main.py --platform x --lt cookie --type search --save_data_option excel
