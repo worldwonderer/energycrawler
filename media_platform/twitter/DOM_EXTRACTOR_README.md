@@ -31,8 +31,7 @@ TwitterDOMExtractor
 Ensure the Energy browser service is running:
 
 ```bash
-cd energy-service
-python -m grpc_server
+python3 scripts/energycrawler_cli.py energy ensure
 ```
 
 ## Usage
@@ -369,8 +368,7 @@ replies = await crawler.get_tweet_replies_dom("elonmusk", "1234567890", count=20
 lsof -i :50051
 
 # Start Energy service
-cd energy-service
-python -m grpc_server
+python3 scripts/energycrawler_cli.py energy ensure
 ```
 
 ## Examples
