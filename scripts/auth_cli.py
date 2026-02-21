@@ -121,6 +121,30 @@ def _xhs_sync_cmd(args: argparse.Namespace) -> int:
         return 1
 
 
+def _xhs_open_login_cmd(args: argparse.Namespace) -> int:
+    cmd_args: List[str] = [
+        "--api-base",
+        args.api_base,
+        "--energy-host",
+        args.energy_host,
+        "--energy-port",
+        str(args.energy_port),
+        "--browser-id",
+        args.browser_id,
+        "--login-url",
+        args.login_url,
+        "--poll-interval",
+        str(args.poll_interval),
+        "--timeout-sec",
+        str(args.timeout_sec),
+    ]
+    if args.headless:
+        cmd_args.append("--headless")
+    if args.json:
+        cmd_args.append("--json")
+    return _run_python_script("xhs_open_login_and_sync.py", cmd_args)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Unified auth/login CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -148,7 +172,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     qr_parser = subparsers.add_parser(
         "xhs-qr-login",
-        help="Run XHS QR login flow and persist cookies to .env",
+        help="Run XHS QR API login flow (fallback mode)",
     )
     qr_parser.add_argument("--api-base", default="http://localhost:8080")
     qr_parser.add_argument("--session-id", default="")
@@ -180,6 +204,21 @@ def _build_parser() -> argparse.ArgumentParser:
         default=True,
     )
     sync_parser.set_defaults(handler=_xhs_sync_cmd)
+
+    open_login_parser = subparsers.add_parser(
+        "xhs-open-login",
+        help="Open XHS login page in Energy and auto-sync cookies after login",
+    )
+    open_login_parser.add_argument("--api-base", default="http://localhost:8080")
+    open_login_parser.add_argument("--energy-host", default="localhost")
+    open_login_parser.add_argument("--energy-port", type=int, default=50051)
+    open_login_parser.add_argument("--browser-id", default="manual_login_xhs")
+    open_login_parser.add_argument("--login-url", default="https://www.xiaohongshu.com")
+    open_login_parser.add_argument("--headless", action="store_true")
+    open_login_parser.add_argument("--poll-interval", type=float, default=2.0)
+    open_login_parser.add_argument("--timeout-sec", type=float, default=300.0)
+    open_login_parser.add_argument("--json", action="store_true")
+    open_login_parser.set_defaults(handler=_xhs_open_login_cmd)
 
     return parser
 

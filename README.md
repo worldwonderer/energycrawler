@@ -54,6 +54,12 @@ python3 scripts/energy_service_cli.py ensure
 uv run python scripts/energy_service_healthcheck.py --host localhost --port 50051
 ```
 
+XHS 签名运行时探针（检查 `window.mnsv2` 可用性）：
+
+```bash
+uv run python scripts/check_xhs_signature_runtime.py --host localhost --port 50051 --json
+```
+
 统一入口（等价命令）：
 
 ```bash
@@ -98,7 +104,27 @@ uv run python scripts/check_login_state.py --host localhost --port 50051
 python3 scripts/auth_cli.py status --host localhost --port 50051
 ```
 
-XHS 也支持通过 API 触发 QR 登录并自动写回 `.env` 的 `COOKIES`：
+推荐登录流（直接打开小红书登录页，在 Energy 内完成扫码/确认，再自动同步）：
+
+```bash
+python3 scripts/auth_cli.py xhs-open-login --api-base http://localhost:8080 --browser-id manual_login_xhs
+```
+
+如果你已经在 Energy 浏览器里登录了 XHS，也可直接同步该会话（无需再打开登录页）：
+
+```bash
+curl -s -X POST http://localhost:8080/api/auth/xhs/energy/sync \
+  -H 'Content-Type: application/json' \
+  -d '{"browser_id":"manual_login_xhs","verify_login":true}'
+```
+
+统一入口（等价命令）：
+
+```bash
+python3 scripts/auth_cli.py xhs-sync --api-base http://localhost:8080 --browser-id manual_login_xhs
+```
+
+XHS QR API 登录（备用方案）：
 
 ```bash
 # 1) 创建登录会话
@@ -129,25 +155,21 @@ python3 scripts/auth_cli.py xhs-qr-login --api-base http://localhost:8080
 该脚本默认会把二维码页自动打开到对应 Energy 浏览器窗口，并提示扫码确认。  
 如不需要自动打开，可加 `--no-open-in-energy`。
 
-如果你已经在 Energy 浏览器里登录了 XHS，推荐直接同步该会话（无需再扫码）：
-
-```bash
-curl -s -X POST http://localhost:8080/api/auth/xhs/energy/sync \
-  -H 'Content-Type: application/json' \
-  -d '{"browser_id":"manual_login_xhs","verify_login":true}'
-```
-
-统一入口（等价命令）：
-
-```bash
-python3 scripts/auth_cli.py xhs-sync --api-base http://localhost:8080 --browser-id manual_login_xhs
-```
-
 服务拉起相关环境变量：
 
 - `ENERGY_ENSURE_RETRIES`：最大重试次数（默认 `3`）
 - `ENERGY_ENSURE_SLEEP_SEC`：重试间隔秒数（默认 `2`）
 - `ENERGY_HEALTHCHECK_TIMEOUT`：单次检查超时（默认 `8` 秒）
+
+签名运行时相关环境变量：
+
+- `XHS_SIGNATURE_CANARY_ENABLED`：是否启用签名 runtime canary（默认 `false`）
+- `XHS_SIGNATURE_CANARY_TIMEOUT_SEC`：canary 超时秒数（默认 `8`）
+- `XHS_SIGNATURE_CANARY_BASELINE_PATH`：可选 baseline 路径（默认使用 `data/xhs/signature_runtime_baseline.json`）
+- `XHS_SIGNATURE_SESSION_TTL_SEC`：签名会话状态 TTL（默认 `1800`）
+- `XHS_SIGNATURE_FAILURE_THRESHOLD`：连续失败告警阈值（默认 `3`）
+
+当 `XHS_SIGNATURE_CANARY_ENABLED=true` 时，API 入队 preflight 与 CLI 启动前检查都会执行签名 runtime canary。
 
 ### 4. 运行 CLI
 
