@@ -7,7 +7,6 @@ Export cookies from Energy browser sessions into project .env.
 from __future__ import annotations
 
 import argparse
-import re
 from pathlib import Path
 from typing import Dict
 import sys
@@ -17,11 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from energy_client.client import BrowserClient
-
-
-def _quote_env_value(value: str) -> str:
-    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{escaped}"'
+from tools.env_store import upsert_env_values
 
 
 def _cookie_header_from_items(cookies) -> str:
@@ -40,23 +35,6 @@ def _cookie_map(header: str) -> Dict[str, str]:
         if key:
             result[key] = value
     return result
-
-
-def _upsert_env(env_path: Path, updates: Dict[str, str]) -> None:
-    lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
-    updated_keys = set()
-
-    for i, line in enumerate(lines):
-        for key, value in updates.items():
-            if re.match(rf"^\s*{re.escape(key)}\s*=", line):
-                lines[i] = f"{key}={_quote_env_value(value)}"
-                updated_keys.add(key)
-
-    for key, value in updates.items():
-        if key not in updated_keys:
-            lines.append(f"{key}={_quote_env_value(value)}")
-
-    env_path.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
 
 
 def main() -> None:
@@ -114,7 +92,7 @@ def main() -> None:
         )
 
     env_path = Path(args.env_file).resolve()
-    _upsert_env(env_path, updates)
+    upsert_env_values(env_path, updates)
     print(f"Updated {env_path}")
     for key, value in updates.items():
         print(f"- {key}: len={len(value)}")

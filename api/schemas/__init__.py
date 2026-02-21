@@ -26,6 +26,15 @@ from .crawler import (
     CrawlerStatusResponse,
     LogEntry,
 )
+from .auth import (
+    XhsQrSessionStartRequest,
+    XhsQrSessionStartResponse,
+    XhsQrCreateResponse,
+    XhsQrStatusResponse,
+    XhsQrCancelResponse,
+    XhsEnergySyncRequest,
+    XhsEnergySyncResponse,
+)
 
 __all__ = [
     "PlatformEnum",
@@ -36,4 +45,11 @@ __all__ = [
     "CrawlerStartResponse",
     "CrawlerStatusResponse",
     "LogEntry",
+    "XhsQrSessionStartRequest",
+    "XhsQrSessionStartResponse",
+    "XhsQrCreateResponse",
+    "XhsQrStatusResponse",
+    "XhsQrCancelResponse",
+    "XhsEnergySyncRequest",
+    "XhsEnergySyncResponse",
 ]

@@ -77,6 +77,39 @@ uv run python scripts/export_cookies_to_env.py --platform all --xhs-browser-id m
 uv run python scripts/check_login_state.py --host localhost --port 50051
 ```
 
+XHS 也支持通过 API 触发 QR 登录并自动写回 `.env` 的 `COOKIES`：
+
+```bash
+# 1) 创建登录会话
+curl -s -X POST http://localhost:8080/api/auth/xhs/qr/session/start
+
+# 2) 创建二维码（替换 session_id）
+curl -s -X POST http://localhost:8080/api/auth/xhs/qr/session/<session_id>/qrcode
+
+# 3) 扫码后轮询状态
+curl -s http://localhost:8080/api/auth/xhs/qr/session/<session_id>/status
+
+# 4) 如需手动结束会话
+curl -s -X POST http://localhost:8080/api/auth/xhs/qr/session/<session_id>/cancel
+```
+
+也可以直接跑完整联调脚本（自动创建会话、生成二维码、轮询状态）：
+
+```bash
+uv run python scripts/xhs_qr_login_flow.py --api-base http://localhost:8080
+```
+
+该脚本默认会把二维码页自动打开到对应 Energy 浏览器窗口，并提示扫码确认。  
+如不需要自动打开，可加 `--no-open-in-energy`。
+
+如果你已经在 Energy 浏览器里登录了 XHS，推荐直接同步该会话（无需再扫码）：
+
+```bash
+curl -s -X POST http://localhost:8080/api/auth/xhs/energy/sync \
+  -H 'Content-Type: application/json' \
+  -d '{"browser_id":"manual_login_xhs","verify_login":true}'
+```
+
 服务拉起相关环境变量：
 
 - `ENERGY_ENSURE_RETRIES`：最大重试次数（默认 `3`）
@@ -144,6 +177,11 @@ uv run uvicorn api.main:app --port 8080 --reload
 - `GET /api/crawler/status`：获取状态
 - `GET /api/crawler/cluster`：查看队列与 worker 快照
 - `GET /api/crawler/logs`：查看日志
+- `POST /api/auth/xhs/qr/session/start`：启动 XHS QR 登录会话
+- `POST /api/auth/xhs/qr/session/{session_id}/qrcode`：生成二维码
+- `GET /api/auth/xhs/qr/session/{session_id}/status`：轮询扫码状态
+- `POST /api/auth/xhs/qr/session/{session_id}/cancel`：结束登录会话
+- `POST /api/auth/xhs/energy/sync`：同步已登录 Energy 会话到 `.env` 的 `COOKIES`
 
 `POST /api/crawler/start` 支持额外安全参数：
 

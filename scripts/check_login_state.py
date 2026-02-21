@@ -78,7 +78,7 @@ def check_xhs_env_state() -> tuple[bool, str]:
     # a1 is a practical minimum for XHS signed API calls.
     if not cookie_map.get("a1", "").strip():
         return False, "env COOKIES missing a1"
-    return True, "env COOKIES present (a1 found)"
+    return True, "env COOKIES present (a1 found; supports QR login output)"
 
 
 def _browser_cookie_header(cookies: List[object]) -> str:

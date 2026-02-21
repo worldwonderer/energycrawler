@@ -10,6 +10,7 @@ PORT="${ENERGY_SERVICE_PORT:-50051}"
 TIMEOUT="${ENERGY_HEALTHCHECK_TIMEOUT:-8}"
 MAX_RETRIES="${ENERGY_ENSURE_RETRIES:-3}"
 SLEEP_SEC="${ENERGY_ENSURE_SLEEP_SEC:-2}"
+UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/energycrawler-uv-cache}"
 START_SCRIPT="${PROJECT_ROOT}/energy-service/start-macos.sh"
 HEALTHCHECK_SCRIPT="${PROJECT_ROOT}/scripts/energy_service_healthcheck.py"
 LOG_PATH="/tmp/energy-service.log"
@@ -73,6 +74,8 @@ if [ ! -x "$START_SCRIPT" ]; then
 fi
 
 if command -v uv >/dev/null 2>&1; then
+    mkdir -p "$UV_CACHE_DIR"
+    export UV_CACHE_DIR
     CHECK_CMD=(uv run python "$HEALTHCHECK_SCRIPT")
 elif command -v python3 >/dev/null 2>&1; then
     CHECK_CMD=(python3 "$HEALTHCHECK_SCRIPT")
