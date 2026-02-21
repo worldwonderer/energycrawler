@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import socket
+from pathlib import Path
 from typing import Tuple
 
 import config
@@ -51,6 +52,49 @@ def has_twitter_auth_material(cookie_header: str = "") -> bool:
     return bool(auth_token and ct0)
 
 
+def run_xhs_signature_canary() -> Tuple[bool, str]:
+    """Run optional XHS signature runtime canary."""
+    try:
+        from scripts.check_xhs_signature_runtime import DEFAULT_BASELINE, load_baseline, run_probe
+    except Exception as exc:
+        return False, f"xhs signature canary unavailable: {exc}"
+
+    host, port = parse_energy_service_address(config.ENERGY_SERVICE_ADDRESS)
+    timeout_sec = float(getattr(config, "XHS_SIGNATURE_CANARY_TIMEOUT_SEC", 8.0))
+    baseline: dict | None = None
+
+    configured_baseline = getattr(config, "XHS_SIGNATURE_CANARY_BASELINE_PATH", "").strip()
+    baseline_path = Path(configured_baseline) if configured_baseline else Path(DEFAULT_BASELINE)
+    if baseline_path.exists():
+        try:
+            baseline = load_baseline(baseline_path)
+        except Exception as exc:
+            return False, f"xhs signature canary baseline invalid: {exc}"
+
+    try:
+        payload = run_probe(
+            host=host,
+            port=port,
+            timeout_sec=timeout_sec,
+            browser_id=None,
+            headless=bool(getattr(config, "ENERGY_HEADLESS", True)),
+            baseline=baseline,
+            keep_browser=False,
+        )
+    except Exception as exc:
+        return False, f"xhs signature canary execution failed: {exc}"
+
+    if payload.get("healthy"):
+        return True, "xhs signature canary passed"
+
+    checks = payload.get("evaluation", {}).get("checks", [])
+    failed = [item for item in checks if not item.get("ok")]
+    if failed:
+        detail = failed[0].get("detail", "")
+        return False, f"xhs signature canary failed: {failed[0].get('name')} ({detail})"
+    return False, "xhs signature canary failed"
+
+
 def preflight_for_platform(platform: str, cookie_header: str = "") -> Tuple[bool, str]:
     ok, message = check_energy_service_reachable()
     if not ok:
@@ -59,11 +103,23 @@ def preflight_for_platform(platform: str, cookie_header: str = "") -> Tuple[bool
     if platform in {"x", "twitter"} and not has_twitter_auth_material(cookie_header):
         return False, "Missing Twitter auth material: require auth_token and ct0 (via TWITTER_COOKIE or env vars)"
 
+    if platform in {"xhs", "xiaohongshu"} and bool(getattr(config, "XHS_SIGNATURE_CANARY_ENABLED", False)):
+        canary_ok, canary_msg = run_xhs_signature_canary()
+        if not canary_ok:
+            return False, canary_msg
+
     return True, "preflight passed"
 
 
-def ensure_energy_service_or_raise() -> None:
+def ensure_energy_service_or_raise(platform: str = "") -> None:
     ok, message = check_energy_service_reachable()
     if not ok:
         raise RuntimeError(message)
+
+    check_platform = (platform or getattr(config, "PLATFORM", "")).strip().lower()
+    if check_platform in {"xhs", "xiaohongshu"} and bool(getattr(config, "XHS_SIGNATURE_CANARY_ENABLED", False)):
+        canary_ok, canary_msg = run_xhs_signature_canary()
+        if not canary_ok:
+            raise RuntimeError(canary_msg)
+
     utils.log_event("preflight.energy.ok", message=message)

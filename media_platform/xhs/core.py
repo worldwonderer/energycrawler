@@ -120,6 +120,8 @@ class XiaoHongShuCrawler(AbstractCrawler):
             port=port,
             browser_id=browser_id,
             headless=config.ENERGY_HEADLESS,
+            session_ttl_sec=getattr(config, "XHS_SIGNATURE_SESSION_TTL_SEC", 1800),
+            failure_warn_threshold=getattr(config, "XHS_SIGNATURE_FAILURE_THRESHOLD", 3),
         )
 
         # 连接到 Energy 服务

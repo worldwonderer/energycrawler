@@ -164,7 +164,10 @@ cython_debug/
 .idea
 /temp_image/
 /browser_data/
-/data/
+/data/*
+!/data/xhs/
+/data/xhs/*
+!/data/xhs/signature_runtime_baseline.json
 
 */.DS_Store
 .vscode

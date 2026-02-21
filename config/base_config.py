@@ -154,6 +154,13 @@ CRAWLER_SLEEP_JITTER_SEC = float(os.getenv("CRAWLER_SLEEP_JITTER_SEC", "1.2"))
 CRAWLER_RETRY_BASE_DELAY_SEC = float(os.getenv("CRAWLER_RETRY_BASE_DELAY_SEC", "2"))
 CRAWLER_RETRY_MAX_DELAY_SEC = float(os.getenv("CRAWLER_RETRY_MAX_DELAY_SEC", "30"))
 
+# ==================== XHS Signature Runtime Controls ====================
+XHS_SIGNATURE_CANARY_ENABLED = os.getenv("XHS_SIGNATURE_CANARY_ENABLED", "false").lower() == "true"
+XHS_SIGNATURE_CANARY_TIMEOUT_SEC = float(os.getenv("XHS_SIGNATURE_CANARY_TIMEOUT_SEC", "8"))
+XHS_SIGNATURE_CANARY_BASELINE_PATH = os.getenv("XHS_SIGNATURE_CANARY_BASELINE_PATH", "").strip()
+XHS_SIGNATURE_SESSION_TTL_SEC = int(os.getenv("XHS_SIGNATURE_SESSION_TTL_SEC", "1800"))
+XHS_SIGNATURE_FAILURE_THRESHOLD = int(os.getenv("XHS_SIGNATURE_FAILURE_THRESHOLD", "3"))
+
 # =================================== Twitter/X.com Configuration ===================================
 
 # Twitter auth_token cookie (required for crawling)
