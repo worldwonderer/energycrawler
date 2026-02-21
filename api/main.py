@@ -17,29 +17,23 @@
 # 使用本代码即表示您同意遵守上述原则和LICENSE中的所有条款。
 
 """
-EnergyCrawler WebUI API Server
+EnergyCrawler API Server
 Start command: uvicorn api.main:app --port 8080 --reload
 Or: python -m api.main
 """
 import asyncio
-import os
 import subprocess
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
 
 from .routers import crawler_router, data_router, websocket_router, auth_router
 
 app = FastAPI(
-    title="EnergyCrawler WebUI API",
-    description="API for controlling EnergyCrawler from WebUI",
+    title="EnergyCrawler API",
+    description="API for controlling EnergyCrawler tasks and auth flows",
     version="1.0.0"
 )
-
-# Get webui static files directory
-WEBUI_DIR = os.path.join(os.path.dirname(__file__), "webui")
 
 # CORS configuration - allow frontend dev server access
 app.add_middleware(
@@ -63,16 +57,12 @@ app.include_router(auth_router, prefix="/api")
 
 
 @app.get("/")
-async def serve_frontend():
-    """Return frontend page"""
-    index_path = os.path.join(WEBUI_DIR, "index.html")
-    if os.path.exists(index_path):
-        return FileResponse(index_path)
+async def root():
+    """API root endpoint."""
     return {
-        "message": "EnergyCrawler WebUI API",
+        "message": "EnergyCrawler API",
         "version": "1.0.0",
         "docs": "/docs",
-        "note": "WebUI not found, please build it first: cd webui && npm run build"
     }
 
 
@@ -162,20 +152,6 @@ async def get_config_options():
             {"value": "mongodb", "label": "MongoDB Database"},
         ],
     }
-
-
-# Mount static resources - must be placed after all routes
-if os.path.exists(WEBUI_DIR):
-    assets_dir = os.path.join(WEBUI_DIR, "assets")
-    if os.path.exists(assets_dir):
-        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
-    # Mount logos directory
-    logos_dir = os.path.join(WEBUI_DIR, "logos")
-    if os.path.exists(logos_dir):
-        app.mount("/logos", StaticFiles(directory=logos_dir), name="logos")
-    # Mount other static files (e.g., vite.svg)
-    app.mount("/static", StaticFiles(directory=WEBUI_DIR), name="webui-static")
-
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8080)

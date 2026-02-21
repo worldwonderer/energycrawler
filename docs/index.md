@@ -41,13 +41,13 @@ uv run main.py --platform x --lt cookie --type detail --specified_id 18900000000
 uv run main.py --help
 ```
 
-## WebUI
+## API 服务
 
 ```bash
 uv run uvicorn api.main:app --port 8080 --reload
 ```
 
-打开 `http://localhost:8080`。
+访问接口文档：`http://localhost:8080/docs`。
 
 ## 数据保存
 
@@ -61,7 +61,6 @@ uv run uvicorn api.main:app --port 8080 --reload
 
 - [项目代码结构](项目代码结构.md)
 - [项目架构文档](项目架构文档.md)
-- [手机号登录说明](手机号登录说明.md)
 
 ## 免责声明
 

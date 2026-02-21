@@ -6,13 +6,13 @@
 
 - 平台范围：`xhs`（小红书）、`x`（X / Twitter）
 - 浏览器能力：统一通过 Energy 服务提供（gRPC）
-- 运行入口：CLI + WebUI API
+- 运行入口：CLI + API
 - 存储方式：`csv / json / db / sqlite / mongodb / excel / postgres`
 
 ## 架构
 
 - 抓取执行：`main.py`
-- WebUI API：`api.main:app`
+- API 服务：`api.main:app`
 - 任务调度：`api/services/crawler_manager.py`
 - 并发模型：队列 + worker 池
 
@@ -27,9 +27,6 @@ CRAWLER_MAX_WORKERS=2
 - Python `3.11`
 - `uv`
 - Energy 服务（默认：`localhost:50051`）
-
-可选：
-- Node.js（仅在前端开发/重建 WebUI 时需要）
 
 ## 快速开始
 
@@ -196,15 +193,13 @@ uv run main.py --platform x --lt cookie --type creator --creator_id "elonmusk"
 uv run main.py --help
 ```
 
-## WebUI
+## API
 
 启动 API：
 
 ```bash
 uv run uvicorn api.main:app --port 8080 --reload
 ```
-
-访问：`http://localhost:8080`
 
 常用接口：
 
@@ -228,12 +223,6 @@ uv run uvicorn api.main:app --port 8080 --reload
 
 - Energy 服务连通性检查
 - `x` 平台鉴权材料检查（`auth_token` + `ct0`）
-
-WebUI 静态资源维护：
-
-- 前端源码目录：`webui-src/`
-- 构建产物目录：`api/webui/`
-- 同步脚本：`bash scripts/sync_webui_assets.sh`
 
 ## 测试
 
