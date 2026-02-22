@@ -165,22 +165,6 @@ CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES = _getenv_int("CRAWLER_MAX_COMMENTS_COUNT
 # If the old version of the project uses db, you need to refer to schema/tables.sql line 287 to add table fields.
 ENABLE_GET_SUB_COMMENTS = _getenv_bool("ENABLE_GET_SUB_COMMENTS", False)
 
-# word cloud related
-# Whether to enable generating comment word clouds
-ENABLE_GET_WORDCLOUD = _getenv_bool("ENABLE_GET_WORDCLOUD", False)
-# Custom words and their groups
-# Add rule: xx:yy where xx is a custom-added phrase, and yy is the group name to which the phrase xx is assigned.
-CUSTOM_WORDS = {
-    "零几": "年份",  # Recognize "zero points" as a whole
-    "高频词": "专业术语",  # Example custom words
-}
-
-# Deactivate (disabled) word file path
-STOP_WORDS_FILE = "./docs/hit_stopwords.txt"
-
-# Chinese font file path
-FONT_PATH = "./docs/STZHONGS.TTF"
-
 # Crawl interval
 CRAWLER_MAX_SLEEP_SEC = _getenv_float("CRAWLER_MAX_SLEEP_SEC", 10)
 
