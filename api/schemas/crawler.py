@@ -77,6 +77,7 @@ class CrawlerStatusResponse(BaseModel):
     error_message: Optional[str] = None
     running_workers: int = 0
     total_workers: int = 1
+    max_queue_size: int = 100
     queued_tasks: int = 0
     active_task_ids: List[str] = Field(default_factory=list)
     pending_task_ids: List[str] = Field(default_factory=list)

@@ -113,7 +113,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
         address_parts = config.ENERGY_SERVICE_ADDRESS.split(":")
         host = address_parts[0] if len(address_parts) > 0 else "localhost"
         port = int(address_parts[1]) if len(address_parts) > 1 else 50051
-        browser_id = f"{config.ENERGY_BROWSER_ID_PREFIX}_xhs"
+        browser_id = config.ENERGY_BROWSER_ID
 
         self.energy_adapter = create_xhs_energy_adapter(
             host=host,

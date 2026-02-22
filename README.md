@@ -20,7 +20,10 @@
 
 ```bash
 CRAWLER_MAX_WORKERS=2
+CRAWLER_MAX_QUEUE_SIZE=100
 ```
+
+集群模式下每个任务会自动分配独立 `ENERGYCRAWLER_BROWSER_ID`，确保并发抓取时浏览器会话隔离。
 
 ## 环境要求
 

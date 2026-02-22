@@ -52,6 +52,11 @@ class _FakeProcessFactory:
         return process
 
 
+class _FailProcessFactory:
+    def __call__(self, _cmd, **_kwargs):
+        raise RuntimeError("spawn boom")
+
+
 def _make_request() -> CrawlerStartRequest:
     return CrawlerStartRequest(
         platform="xhs",
@@ -83,6 +88,7 @@ async def test_start_dispatches_to_worker_pool_and_queues_excess_tasks(monkeypat
     assert status["running_workers"] == 2
     assert status["queued_tasks"] == 1
     assert status["total_workers"] == 2
+    assert status["max_queue_size"] == 100
     assert len(status["active_task_ids"]) == 2
     assert len(status["pending_task_ids"]) == 1
 
@@ -161,5 +167,67 @@ async def test_start_rejects_when_preflight_fails(monkeypatch):
 
     result = await manager.start(_make_request())
     assert result["accepted"] is False
-    assert result["error"] == "energy unreachable"
+    assert "energy unreachable" in result["error"]
     assert manager.get_status()["status"] in {"idle", "error"}
+
+
+@pytest.mark.asyncio
+async def test_start_rejects_when_queue_is_full(monkeypatch):
+    monkeypatch.setattr(crawler_manager_module, "preflight_for_platform", lambda *_args, **_kwargs: (True, "ok"))
+    factory = _FakeProcessFactory()
+    manager = CrawlerManager(
+        max_workers=1,
+        max_queue_size=1,
+        process_factory=factory,
+        enable_output_reader=False,
+    )
+
+    first = await manager.start(_make_request())
+    second = await manager.start(_make_request())
+    third = await manager.start(_make_request())
+
+    assert first["accepted"] is True
+    assert second["accepted"] is True
+    assert third["accepted"] is False
+    assert "queue is full" in third["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_start_rejects_new_tasks_while_stopping(monkeypatch):
+    monkeypatch.setattr(crawler_manager_module, "preflight_for_platform", lambda *_args, **_kwargs: (True, "ok"))
+    manager = CrawlerManager(max_workers=1, enable_output_reader=False)
+    manager._stopping = True
+
+    result = await manager.start(_make_request())
+    assert result["accepted"] is False
+    assert "stopping" in result["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_start_rejects_immediately_when_worker_spawn_fails(monkeypatch):
+    monkeypatch.setattr(crawler_manager_module, "preflight_for_platform", lambda *_args, **_kwargs: (True, "ok"))
+    manager = CrawlerManager(
+        max_workers=1,
+        process_factory=_FailProcessFactory(),
+        enable_output_reader=False,
+    )
+
+    result = await manager.start(_make_request())
+    status = manager.get_status()
+    assert result["accepted"] is False
+    assert "failed to start task" in result["error"].lower()
+    assert status["queued_tasks"] == 0
+    assert status["running_workers"] == 0
+
+
+def test_worker_env_includes_cluster_browser_id(monkeypatch):
+    monkeypatch.setenv("ENERGY_BROWSER_ID_PREFIX", "cluster")
+    manager = CrawlerManager(max_workers=1, enable_output_reader=False)
+    task = crawler_manager_module._QueuedTask(
+        task_id="task-000123",
+        config=_make_request(),
+        enqueued_at=crawler_manager_module.datetime.now(),
+    )
+
+    env = manager._build_worker_env(task, worker_id=2)
+    assert env["ENERGYCRAWLER_BROWSER_ID"] == "cluster_xhs_w2_task-000123"

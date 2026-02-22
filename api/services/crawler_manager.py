@@ -37,6 +37,7 @@ class CrawlerManager:
     def __init__(
         self,
         max_workers: Optional[int] = None,
+        max_queue_size: Optional[int] = None,
         process_factory: Optional[Callable[..., subprocess.Popen]] = None,
         enable_output_reader: bool = True,
     ):
@@ -44,6 +45,7 @@ class CrawlerManager:
         self._process_factory = process_factory or subprocess.Popen
         self._enable_output_reader = enable_output_reader
         self.max_workers = self._resolve_max_workers(max_workers)
+        self.max_queue_size = self._resolve_max_queue_size(max_queue_size)
 
         self._workers: List["_WorkerSlot"] = [
             _WorkerSlot(worker_id=index + 1) for index in range(self.max_workers)
@@ -139,6 +141,26 @@ class CrawlerManager:
             return {"accepted": False, "error": hint_message}
 
         async with self._lock:
+            if self._stopping:
+                error = "Crawler cluster is stopping, reject new tasks"
+                entry = self._create_log_entry(f"[QUEUE] rejected task: {error}", "warning")
+                await self._push_log(entry)
+                return {"accepted": False, "error": error}
+
+            if len(self._pending_tasks) >= self.max_queue_size:
+                error = f"Crawler queue is full ({self.max_queue_size}), please retry later"
+                entry = self._create_log_entry(f"[QUEUE] rejected task: {error}", "warning")
+                await self._push_log(entry)
+                utils.log_event(
+                    "crawler_manager.queue.full",
+                    level="warning",
+                    platform=config.platform.value,
+                    crawler_type=config.crawler_type.value,
+                    queue_size=len(self._pending_tasks),
+                    max_queue_size=self.max_queue_size,
+                )
+                return {"accepted": False, "error": error}
+
             task = _QueuedTask(
                 task_id=self._next_task_id(),
                 config=config,
@@ -163,6 +185,24 @@ class CrawlerManager:
 
             await self._dispatch_pending_locked()
             snapshot = self._compose_status_locked()
+
+            if (
+                self._last_error
+                and snapshot["running_workers"] == 0
+                and task.task_id in snapshot["pending_task_ids"]
+            ):
+                self._remove_pending_task_locked(task.task_id)
+                error = f"Failed to start task {task.task_id}: {self._last_error}"
+                entry = self._create_log_entry(f"[QUEUE] {error}", "error")
+                await self._push_log(entry)
+                self._refresh_runtime_status_locked()
+                snapshot = self._compose_status_locked()
+                return {
+                    "accepted": False,
+                    "error": error,
+                    "queued_tasks": snapshot["queued_tasks"],
+                    "running_workers": snapshot["running_workers"],
+                }
 
             return {
                 "accepted": True,
@@ -472,6 +512,11 @@ class CrawlerManager:
                 return worker
         return None
 
+    def _remove_pending_task_locked(self, task_id: str) -> None:
+        self._pending_tasks = deque(
+            task for task in self._pending_tasks if task.task_id != task_id
+        )
+
     def _refresh_runtime_status_locked(self):
         running_workers = self._running_workers_count_locked()
         pending_tasks = len(self._pending_tasks)
@@ -528,6 +573,7 @@ class CrawlerManager:
             "error_message": self._last_error,
             "running_workers": len(running_task_ids),
             "total_workers": self.max_workers,
+            "max_queue_size": self.max_queue_size,
             "queued_tasks": len(pending_task_ids),
             "active_task_ids": running_task_ids,
             "pending_task_ids": pending_task_ids,
@@ -560,6 +606,7 @@ class CrawlerManager:
             "error_message": self._last_error,
             "running_workers": len(running_task_ids),
             "total_workers": self.max_workers,
+            "max_queue_size": self.max_queue_size,
             "queued_tasks": len(pending_task_ids),
             "active_task_ids": running_task_ids,
             "pending_task_ids": pending_task_ids,
@@ -577,11 +624,27 @@ class CrawlerManager:
 
         return max(1, min(candidate, 16))
 
+    def _resolve_max_queue_size(self, max_queue_size: Optional[int]) -> int:
+        if max_queue_size is not None:
+            candidate = max_queue_size
+        else:
+            raw_value = os.getenv("CRAWLER_MAX_QUEUE_SIZE", "100")
+            try:
+                candidate = int(raw_value)
+            except ValueError:
+                candidate = 100
+
+        return max(1, min(candidate, 10000))
+
     def _next_task_id(self) -> str:
         self._task_seq += 1
         return f"task-{self._task_seq:06d}"
 
     def _build_worker_env(self, task: "_QueuedTask", worker_id: int) -> dict:
+        prefix = os.getenv("ENERGY_BROWSER_ID_PREFIX", "energycrawler").strip() or "energycrawler"
+        browser_id = (
+            f"{prefix}_{task.config.platform.value}_w{worker_id}_{task.task_id}"
+        )
         return {
             **os.environ,
             "PYTHONUNBUFFERED": "1",
@@ -589,6 +652,7 @@ class CrawlerManager:
             "ENERGYCRAWLER_PLATFORM": task.config.platform.value,
             "ENERGYCRAWLER_CRAWLER_TYPE": task.config.crawler_type.value,
             "ENERGYCRAWLER_WORKER_ID": str(worker_id),
+            "ENERGYCRAWLER_BROWSER_ID": browser_id,
         }
 
 

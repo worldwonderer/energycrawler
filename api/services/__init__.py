@@ -17,12 +17,13 @@
 # 使用本代码即表示您同意遵守上述原则和LICENSE中的所有条款。
 
 from .crawler_manager import CrawlerManager, crawler_manager
-from .xhs_qr_auth_service import (
-    XhsQrAuthService,
-    XhsQrAuthError,
-    XhsQrSessionNotFoundError,
-    qr_auth_service,
-)
+
+_QR_SYMBOLS = {
+    "XhsQrAuthService",
+    "XhsQrAuthError",
+    "XhsQrSessionNotFoundError",
+    "qr_auth_service",
+}
 
 __all__ = [
     "CrawlerManager",
@@ -32,3 +33,12 @@ __all__ = [
     "XhsQrSessionNotFoundError",
     "qr_auth_service",
 ]
+
+
+def __getattr__(name: str):
+    if name not in _QR_SYMBOLS:
+        raise AttributeError(name)
+
+    from . import xhs_qr_auth_service as _xhs_qr_auth_service
+
+    return getattr(_xhs_qr_auth_service, name)

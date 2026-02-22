@@ -117,6 +117,27 @@ ENERGY_HEADLESS = _getenv_bool("ENERGY_HEADLESS", True)
 # Browser instance ID prefix for Energy service (will be appended with platform name)
 ENERGY_BROWSER_ID_PREFIX = os.getenv("ENERGY_BROWSER_ID_PREFIX", "energycrawler").strip() or "energycrawler"
 
+
+def resolve_energy_browser_id(platform: str | None = None) -> str:
+    """
+    Resolve Energy browser ID for current runtime.
+
+    Priority:
+    1) `ENERGYCRAWLER_BROWSER_ID` (worker/task-scoped override from cluster manager)
+    2) `{ENERGY_BROWSER_ID_PREFIX}_{platform}`
+    """
+
+    runtime_override = os.getenv("ENERGYCRAWLER_BROWSER_ID", "").strip()
+    if runtime_override:
+        return runtime_override
+
+    normalized_platform = (platform or PLATFORM or "xhs").strip() or "xhs"
+    return f"{ENERGY_BROWSER_ID_PREFIX}_{normalized_platform}"
+
+
+# Runtime browser ID used by crawler processes.
+ENERGY_BROWSER_ID = resolve_energy_browser_id(PLATFORM)
+
 # ==================== Per-Platform Energy Configuration ====================
 # These settings allow fine-grained control over which supported platforms use Energy browser.
 XHS_ENABLE_ENERGY = ENABLE_ENERGY_BROWSER

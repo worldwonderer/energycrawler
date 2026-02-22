@@ -342,6 +342,7 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
         config.ENABLE_IP_PROXY = enable_ip_proxy_value
         config.IP_PROXY_POOL_COUNT = ip_proxy_pool_count
         config.IP_PROXY_PROVIDER_NAME = ip_proxy_provider_name
+        config.ENERGY_BROWSER_ID = config.resolve_energy_browser_id(config.PLATFORM)
 
         # Set platform-specific ID lists for detail/creator mode
         if specified_id_list:
