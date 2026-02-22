@@ -57,6 +57,17 @@ class _FailProcessFactory:
         raise RuntimeError("spawn boom")
 
 
+class _OneSuccessThenFailFactory:
+    def __init__(self):
+        self.called = 0
+
+    def __call__(self, _cmd, **_kwargs):
+        self.called += 1
+        if self.called == 1:
+            return _FakeProcess()
+        raise RuntimeError("spawn fail later")
+
+
 def _make_request() -> CrawlerStartRequest:
     return CrawlerStartRequest(
         platform="xhs",
@@ -208,6 +219,7 @@ async def test_start_rejects_immediately_when_worker_spawn_fails(monkeypatch):
     monkeypatch.setattr(crawler_manager_module, "preflight_for_platform", lambda *_args, **_kwargs: (True, "ok"))
     manager = CrawlerManager(
         max_workers=1,
+        max_spawn_retries=1,
         process_factory=_FailProcessFactory(),
         enable_output_reader=False,
     )
@@ -218,6 +230,34 @@ async def test_start_rejects_immediately_when_worker_spawn_fails(monkeypatch):
     assert "failed to start task" in result["error"].lower()
     assert status["queued_tasks"] == 0
     assert status["running_workers"] == 0
+
+
+@pytest.mark.asyncio
+async def test_queued_task_removed_when_spawn_retries_exhausted(monkeypatch):
+    monkeypatch.setattr(crawler_manager_module, "preflight_for_platform", lambda *_args, **_kwargs: (True, "ok"))
+    factory = _OneSuccessThenFailFactory()
+    manager = CrawlerManager(
+        max_workers=1,
+        max_spawn_retries=1,
+        process_factory=factory,
+        enable_output_reader=False,
+    )
+
+    first = await manager.start(_make_request())
+    second = await manager.start(_make_request())
+    assert first["accepted"] is True
+    assert second["accepted"] is True
+    assert manager.get_status()["queued_tasks"] == 1
+
+    process = manager._workers[0].process
+    task_id = manager._workers[0].task_id
+    process.returncode = 0
+    await manager._on_worker_exit(worker_id=1, process=process, task_id=task_id, exit_code=0)
+
+    status = manager.get_status()
+    assert status["queued_tasks"] == 0
+    assert status["running_workers"] == 0
+    assert status["status"] in {"idle", "error"}
 
 
 def test_worker_env_includes_cluster_browser_id(monkeypatch):

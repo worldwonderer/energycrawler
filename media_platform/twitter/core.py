@@ -194,13 +194,6 @@ class TwitterCrawler(AbstractCrawler):
             headless=self._headless,
         )
 
-        # Connect to Energy service
-        self.energy_adapter.connect()
-
-        # Open domain once before cookie injection to ensure cookie scope is available.
-        self.energy_adapter.browser.navigate(browser_id, "https://x.com", 30000)
-        await asyncio.sleep(2)
-
         # Inject full cookie jar into browser session when provided.
         if self._cookie_header:
             cookie_dict = utils.convert_str_cookie_to_dict(self._cookie_header)
@@ -735,6 +728,10 @@ class TwitterCrawler(AbstractCrawler):
 
         # Disconnect Energy adapter
         if self.energy_adapter:
+            try:
+                self.energy_adapter.browser.close_browser(self.energy_adapter.browser_id)
+            except Exception as e:
+                utils.logger.warning(f"[TwitterCrawler.close] Error closing Energy browser: {e}")
             try:
                 self.energy_adapter.disconnect()
                 utils.logger.info("[TwitterCrawler.close] Energy adapter disconnected")

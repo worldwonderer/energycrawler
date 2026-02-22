@@ -124,19 +124,6 @@ class XiaoHongShuCrawler(AbstractCrawler):
             failure_warn_threshold=getattr(config, "XHS_SIGNATURE_FAILURE_THRESHOLD", 3),
         )
 
-        # 连接到 Energy 服务
-        self.energy_adapter.connect()
-
-        # 尝试创建浏览器，如果已存在则忽略错误
-        try:
-            self.energy_adapter.browser.create_browser(browser_id, headless=config.ENERGY_HEADLESS)
-        except Exception as e:
-            if "already exists" not in str(e).lower():
-                raise
-
-        # 导航到小红书
-        self.energy_adapter.browser.navigate(browser_id, "https://www.xiaohongshu.com", 30000)
-
         # 如果配置了 COOKIES，优先注入到 Energy 浏览器会话，避免每次重启都需手动登录。
         if self._cookie_header:
             cookie_map = utils.convert_str_cookie_to_dict(self._cookie_header)
@@ -519,6 +506,10 @@ class XiaoHongShuCrawler(AbstractCrawler):
     async def close(self) -> None:
         """清理资源"""
         if self.energy_adapter:
+            try:
+                self.energy_adapter.browser.close_browser(self.energy_adapter.browser_id)
+            except Exception as e:
+                utils.logger.warning(f"[XiaoHongShuCrawler.close] Error closing Energy browser: {e}")
             try:
                 self.energy_adapter.disconnect()
                 utils.logger.info("[XiaoHongShuCrawler.close] Energy adapter disconnected")

@@ -22,9 +22,12 @@
 
 - `CRAWLER_MAX_WORKERS`：worker 池大小，默认 `2`，范围 `1~16`。
 - `CRAWLER_MAX_QUEUE_SIZE`：队列上限，默认 `100`，超限后 `/start` 会拒绝新任务。
+- `CRAWLER_WORKER_SPAWN_MAX_RETRIES`：worker 拉起失败重试次数（默认 `2`）。
+- `CRAWLER_DISPATCH_RETRY_DELAY_SEC`：拉起失败后的重试间隔秒数（默认 `2`）。
 
 ## 浏览器集群接入
 
 - 调度器会为每个任务注入独立环境变量 `ENERGYCRAWLER_BROWSER_ID`。
 - 浏览器 ID 规则：`{ENERGY_BROWSER_ID_PREFIX}_{platform}_w{worker_id}_{task_id}`。
 - 爬虫进程会优先使用该运行时 ID，确保多 worker 并发时浏览器会话隔离，避免 Cookie/页面状态串扰。
+- 任务结束时会主动关闭对应 Energy 浏览器实例，避免浏览器会话泄漏。

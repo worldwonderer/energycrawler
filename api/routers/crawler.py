@@ -29,7 +29,13 @@ async def start_crawler(request: CrawlerStartRequest):
     """Enqueue crawler task"""
     result = await crawler_manager.start(request)
     if not result.get("accepted"):
-        raise HTTPException(status_code=400, detail=result.get("error", "Failed to enqueue crawler task"))
+        error = result.get("error", "Failed to enqueue crawler task")
+        error_lower = str(error).lower()
+        if "queue is full" in error_lower:
+            raise HTTPException(status_code=429, detail=error)
+        if "stopping" in error_lower:
+            raise HTTPException(status_code=409, detail=error)
+        raise HTTPException(status_code=400, detail=error)
 
     return {
         "status": "ok",
