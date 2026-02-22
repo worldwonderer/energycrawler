@@ -15,9 +15,9 @@ assignees: ""
 Describe the bug clearly.
 
 ## Reproduction
-1. 
-2. 
-3. 
+1.
+2.
+3.
 
 ## Environment
 - OS:

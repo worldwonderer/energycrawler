@@ -1208,7 +1208,18 @@ def create_twitter_energy_adapter(
 
     # Connect and create browser
     adapter.connect()
-    backend.create_browser(browser_id, headless=headless)
+    created = False
+    try:
+        created = backend.create_browser(browser_id, headless=headless)
+    except Exception as exc:
+        if "already exists" not in str(exc).lower():
+            raise
+        created = False
+
+    if not created:
+        logger.warning(
+            f"[TwitterEnergyAdapter] Browser may already exist, reuse browser_id={browser_id}"
+        )
 
     # Navigate to Twitter to initialize the page context
     backend.navigate(browser_id, TwitterEnergyAdapter.TWITTER_BASE_URL, timeout_ms=30000)

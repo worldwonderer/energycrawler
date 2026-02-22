@@ -79,8 +79,7 @@ For real crawler verification, use the interactive flow runner. It will:
 4. run real XHS/X crawling
 
 ```bash
-cd /Users/pite/energycrawler
-.venv/bin/python tests/e2e/run_xhs_x_crawl_flow.py
+uv run python tests/e2e/run_xhs_x_crawl_flow.py
 ```
 
 Runner defaults are conservative for account safety:
@@ -91,15 +90,13 @@ Runner defaults are conservative for account safety:
 For the safest real check, run with a single item:
 
 ```bash
-cd /Users/pite/energycrawler
-.venv/bin/python tests/e2e/run_xhs_x_crawl_flow.py --max-count 1
+uv run python tests/e2e/run_xhs_x_crawl_flow.py --max-count 1
 ```
 
 Only perform login checks (skip crawl):
 
 ```bash
-cd /Users/pite/energycrawler
-.venv/bin/python tests/e2e/run_xhs_x_crawl_flow.py --skip-crawl
+uv run python tests/e2e/run_xhs_x_crawl_flow.py --skip-crawl
 ```
 
 If X login via Google is blocked in embedded browser, set cookie envs and skip interactive X login:
@@ -107,14 +104,14 @@ If X login via Google is blocked in embedded browser, set cookie envs and skip i
 ```bash
 export TWITTER_AUTH_TOKEN="your_auth_token"
 export TWITTER_CT0="your_ct0"
-.venv/bin/python tests/e2e/run_xhs_x_crawl_flow.py
+uv run python tests/e2e/run_xhs_x_crawl_flow.py
 ```
 
 You can also provide a raw Cookie header and let runner auto-extract:
 
 ```bash
 export TWITTER_COOKIE="auth_token=...; ct0=...;"
-.venv/bin/python tests/e2e/run_xhs_x_crawl_flow.py
+uv run python tests/e2e/run_xhs_x_crawl_flow.py
 ```
 
 When `TWITTER_COOKIE` is set, full cookie values are:
@@ -135,7 +132,7 @@ By default, interactive X login is disabled to avoid embedded-browser login rest
 If you still want to try it, enable explicitly:
 
 ```bash
-.venv/bin/python tests/e2e/run_xhs_x_crawl_flow.py --enable-interactive-x-login
+uv run python tests/e2e/run_xhs_x_crawl_flow.py --enable-interactive-x-login
 ```
 
 ### Run All Tests
@@ -160,7 +157,7 @@ cd tests/e2e
 ### E2E Tests
 
 - `test_basic_flow.py`: Browser lifecycle, navigation, cookies, JS execution
-- `test_signature.py`: Signature generation, proxy settings, error handling
+- `test_signature.py`: Signature generation and error handling
 
 ## Test Markers
 

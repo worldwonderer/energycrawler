@@ -84,16 +84,6 @@ LOGIN_TYPE = os.getenv("LOGIN_TYPE", "cookie").strip() or "cookie"  # cookie onl
 COOKIES = os.getenv("COOKIES", "").strip()
 CRAWLER_TYPE = os.getenv("CRAWLER_TYPE", "search").strip() or "search"
 # Crawling type: search (keyword search) | detail (post details) | creator (creator homepage data)
-# Whether to enable IP proxy
-ENABLE_IP_PROXY = _getenv_bool("ENABLE_IP_PROXY", False)
-
-# Number of proxy IP pools
-IP_PROXY_POOL_COUNT = _getenv_int("IP_PROXY_POOL_COUNT", 2)
-
-# Proxy IP provider name
-IP_PROXY_PROVIDER_NAME = os.getenv("IP_PROXY_PROVIDER_NAME", "kuaidaili").strip() or "kuaidaili"
-# kuaidaili | wandouhttp
-
 # Setting to True will not open the browser (headless browser)
 # Setting False will open a browser
 # If Xiaohongshu keeps scanning the code to log in but fails, open the browser and manually pass the sliding verification code.
@@ -116,6 +106,27 @@ ENERGY_HEADLESS = _getenv_bool("ENERGY_HEADLESS", True)
 
 # Browser instance ID prefix for Energy service (will be appended with platform name)
 ENERGY_BROWSER_ID_PREFIX = os.getenv("ENERGY_BROWSER_ID_PREFIX", "energycrawler").strip() or "energycrawler"
+
+
+def resolve_energy_browser_id(platform: str | None = None) -> str:
+    """
+    Resolve Energy browser ID for current runtime.
+
+    Priority:
+    1) `ENERGYCRAWLER_BROWSER_ID` (worker/task-scoped override from cluster manager)
+    2) `{ENERGY_BROWSER_ID_PREFIX}_{platform}`
+    """
+
+    runtime_override = os.getenv("ENERGYCRAWLER_BROWSER_ID", "").strip()
+    if runtime_override:
+        return runtime_override
+
+    normalized_platform = (platform or PLATFORM or "xhs").strip() or "xhs"
+    return f"{ENERGY_BROWSER_ID_PREFIX}_{normalized_platform}"
+
+
+# Runtime browser ID used by crawler processes.
+ENERGY_BROWSER_ID = resolve_energy_browser_id(PLATFORM)
 
 # ==================== Per-Platform Energy Configuration ====================
 # These settings allow fine-grained control over which supported platforms use Energy browser.
@@ -153,22 +164,6 @@ CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES = _getenv_int("CRAWLER_MAX_COMMENTS_COUNT
 # Whether to enable the mode of crawling second-level comments. By default, crawling of second-level comments is not enabled.
 # If the old version of the project uses db, you need to refer to schema/tables.sql line 287 to add table fields.
 ENABLE_GET_SUB_COMMENTS = _getenv_bool("ENABLE_GET_SUB_COMMENTS", False)
-
-# word cloud related
-# Whether to enable generating comment word clouds
-ENABLE_GET_WORDCLOUD = _getenv_bool("ENABLE_GET_WORDCLOUD", False)
-# Custom words and their groups
-# Add rule: xx:yy where xx is a custom-added phrase, and yy is the group name to which the phrase xx is assigned.
-CUSTOM_WORDS = {
-    "零几": "年份",  # Recognize "zero points" as a whole
-    "高频词": "专业术语",  # Example custom words
-}
-
-# Deactivate (disabled) word file path
-STOP_WORDS_FILE = "./docs/hit_stopwords.txt"
-
-# Chinese font file path
-FONT_PATH = "./docs/STZHONGS.TTF"
 
 # Crawl interval
 CRAWLER_MAX_SLEEP_SEC = _getenv_float("CRAWLER_MAX_SLEEP_SEC", 10)

@@ -20,7 +20,12 @@
 
 ```bash
 CRAWLER_MAX_WORKERS=2
+CRAWLER_MAX_QUEUE_SIZE=100
+CRAWLER_WORKER_SPAWN_MAX_RETRIES=2
+CRAWLER_DISPATCH_RETRY_DELAY_SEC=2
 ```
+
+集群模式下每个任务会自动分配独立 `ENERGYCRAWLER_BROWSER_ID`，确保并发抓取时浏览器会话隔离。
 
 ## 环境要求
 
@@ -39,19 +44,19 @@ uv sync
 可选：先复制最小可用配置模板。
 
 ```bash
-cp .env.quickstart.example .env
+uv run energycrawler init
 ```
 
 ### 2. 启动 Energy 服务（推荐自动保活）
 
 ```bash
-python3 scripts/energycrawler_cli.py energy ensure
+uv run energycrawler energy ensure
 ```
 
 统一入口（等价命令）：
 
 ```bash
-python3 scripts/energy_service_cli.py ensure
+uv run energycrawler energy ensure
 ```
 
 手动健康检查：
@@ -69,7 +74,7 @@ uv run python scripts/check_xhs_signature_runtime.py --host localhost --port 500
 统一入口（等价命令）：
 
 ```bash
-python3 scripts/energy_service_cli.py check --host localhost --port 50051
+uv run energycrawler energy check --host localhost --port 50051
 ```
 
 ### 3. 配置参数
@@ -89,31 +94,31 @@ python3 scripts/energy_service_cli.py check --host localhost --port 50051
 登录后可把浏览器 Cookie 持久化到 `.env`：
 
 ```bash
-python3 scripts/energycrawler_cli.py auth export --platform all --xhs-browser-id manual_login_xhs --x-browser-id manual_login_x
+uv run energycrawler auth export --platform all --xhs-browser-id manual_login_xhs --x-browser-id manual_login_x
 ```
 
 统一入口（等价命令）：
 
 ```bash
-python3 scripts/auth_cli.py export --platform all --xhs-browser-id manual_login_xhs --x-browser-id manual_login_x
+uv run energycrawler auth export --platform all --xhs-browser-id manual_login_xhs --x-browser-id manual_login_x
 ```
 
 登录态快速检查：
 
 ```bash
-python3 scripts/energycrawler_cli.py auth status --host localhost --port 50051
+uv run energycrawler auth status --host localhost --port 50051
 ```
 
 统一入口（等价命令）：
 
 ```bash
-python3 scripts/auth_cli.py status --host localhost --port 50051
+uv run energycrawler auth status --host localhost --port 50051
 ```
 
 推荐登录流（直接打开小红书登录页，在 Energy 内完成扫码/确认，再自动同步）：
 
 ```bash
-python3 scripts/energycrawler_cli.py auth xhs-open-login --api-base http://localhost:8080 --browser-id manual_login_xhs
+uv run energycrawler auth xhs-open-login --api-base http://localhost:8080 --browser-id manual_login_xhs
 ```
 
 如果你已经在 Energy 浏览器里登录了 XHS，也可直接同步该会话（无需再打开登录页）：
@@ -127,7 +132,7 @@ curl -s -X POST http://localhost:8080/api/auth/xhs/energy/sync \
 统一入口（等价命令）：
 
 ```bash
-python3 scripts/energycrawler_cli.py auth xhs-sync --api-base http://localhost:8080 --browser-id manual_login_xhs
+uv run energycrawler auth xhs-sync --api-base http://localhost:8080 --browser-id manual_login_xhs
 ```
 
 XHS QR API 登录（备用方案）：
@@ -155,10 +160,10 @@ uv run python scripts/xhs_qr_login_flow.py --api-base http://localhost:8080
 统一入口（等价命令）：
 
 ```bash
-python3 scripts/energycrawler_cli.py auth xhs-qr-login --api-base http://localhost:8080
+uv run energycrawler auth xhs-qr-login --api-base http://localhost:8080
 ```
 
-该脚本默认会把二维码页自动打开到对应 Energy 浏览器窗口，并提示扫码确认。  
+该脚本默认会把二维码页自动打开到对应 Energy 浏览器窗口，并提示扫码确认。
 如不需要自动打开，可加 `--no-open-in-energy`。
 
 服务拉起相关环境变量：
@@ -182,49 +187,55 @@ python3 scripts/energycrawler_cli.py auth xhs-qr-login --api-base http://localho
 小红书关键词抓取：
 
 ```bash
-python3 scripts/energycrawler_cli.py crawl -- --platform xhs --lt cookie --type search --keywords 编程副业,独立开发
+uv run energycrawler crawl -- --platform xhs --lt cookie --type search --keywords 编程副业,独立开发
 ```
 
 小批量安全测试（限制数量 + 增加间隔）：
 
 ```bash
-python3 scripts/energycrawler_cli.py crawl -- --platform xhs --lt cookie --type search --keywords 新能源 --max_notes_count 3 --crawl_sleep_sec 12
+uv run energycrawler crawl -- --platform xhs --lt cookie --type search --keywords 新能源 --max_notes_count 3 --crawl_sleep_sec 12
 ```
 
 小红书详情抓取：
 
 ```bash
-python3 scripts/energycrawler_cli.py crawl -- --platform xhs --lt cookie --type detail --specified_id "https://www.xiaohongshu.com/explore/xxxx?xsec_token=xxxx"
+uv run energycrawler crawl -- --platform xhs --lt cookie --type detail --specified_id "https://www.xiaohongshu.com/explore/xxxx?xsec_token=xxxx"
 ```
 
 X 关键词抓取：
 
 ```bash
-python3 scripts/energycrawler_cli.py crawl -- --platform x --lt cookie --type search --keywords "open source"
+uv run energycrawler crawl -- --platform x --lt cookie --type search --keywords "open source"
 ```
 
 X 指定推文抓取：
 
 ```bash
-python3 scripts/energycrawler_cli.py crawl -- --platform x --lt cookie --type detail --specified_id "1890000000000000000"
+uv run energycrawler crawl -- --platform x --lt cookie --type detail --specified_id "1890000000000000000"
 ```
 
 X 创作者抓取：
 
 ```bash
-python3 scripts/energycrawler_cli.py crawl -- --platform x --lt cookie --type creator --creator_id "elonmusk"
+uv run energycrawler crawl -- --platform x --lt cookie --type creator --creator_id "elonmusk"
 ```
 
 查看参数：
 
 ```bash
-python3 scripts/energycrawler_cli.py crawl -- --help
+uv run energycrawler crawl -- --help
 ```
 
 一键体检（服务连通 + 登录态就绪）：
 
 ```bash
-python3 scripts/energycrawler_cli.py doctor
+uv run energycrawler doctor
+```
+
+输出严格清理报告（未引用文档图片、疑似历史汇总文档、旧命令、绝对路径、尾随空格）：
+
+```bash
+uv run energycrawler cleanup-report --json
 ```
 
 ## API

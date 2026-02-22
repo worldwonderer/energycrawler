@@ -22,28 +22,45 @@ Start command: uvicorn api.main:app --port 8080 --reload
 Or: python -m api.main
 """
 import asyncio
+from pathlib import Path
 import subprocess
+
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .routers import crawler_router, data_router, websocket_router, auth_router
+from .schemas import SaveDataOptionEnum
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+ENV_CHECK_TIMEOUT_SECONDS = 30.0
+ENV_CHECK_OUTPUT_LIMIT = 500
+ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:3000",
+]
+SAVE_OPTION_LABELS = {
+    SaveDataOptionEnum.JSON.value: "JSON File",
+    SaveDataOptionEnum.CSV.value: "CSV File",
+    SaveDataOptionEnum.EXCEL.value: "Excel File",
+    SaveDataOptionEnum.SQLITE.value: "SQLite Database",
+    SaveDataOptionEnum.DB.value: "MySQL Database",
+    SaveDataOptionEnum.MONGODB.value: "MongoDB Database",
+    SaveDataOptionEnum.POSTGRES.value: "PostgreSQL Database",
+}
 
 app = FastAPI(
     title="EnergyCrawler API",
     description="API for controlling EnergyCrawler tasks and auth flows",
-    version="1.0.0"
+    version="1.0.0",
 )
 
 # CORS configuration - allow frontend dev server access
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",  # Vite dev server
-        "http://localhost:3000",  # Backup port
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -71,52 +88,60 @@ async def health_check():
     return {"status": "ok"}
 
 
+def _truncate_output(value: str) -> str:
+    return value[:ENV_CHECK_OUTPUT_LIMIT]
+
+
 @app.get("/api/env/check")
 async def check_environment():
     """Check if EnergyCrawler environment is configured correctly"""
     try:
-        # Run uv run main.py --help command to check environment
         process = await asyncio.create_subprocess_exec(
-            "uv", "run", "main.py", "--help",
+            "uv",
+            "run",
+            "main.py",
+            "--help",
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            cwd="."  # Project root directory
+            cwd=str(PROJECT_ROOT),
         )
         stdout, stderr = await asyncio.wait_for(
             process.communicate(),
-            timeout=30.0  # 30 seconds timeout
+            timeout=ENV_CHECK_TIMEOUT_SECONDS,
         )
 
+        stdout_text = stdout.decode("utf-8", errors="ignore")
+        stderr_text = stderr.decode("utf-8", errors="ignore")
         if process.returncode == 0:
             return {
                 "success": True,
                 "message": "EnergyCrawler environment configured correctly",
-                "output": stdout.decode("utf-8", errors="ignore")[:500]  # Truncate to first 500 characters
+                "output": _truncate_output(stdout_text),
             }
-        else:
-            error_msg = stderr.decode("utf-8", errors="ignore") or stdout.decode("utf-8", errors="ignore")
-            return {
-                "success": False,
-                "message": "Environment check failed",
-                "error": error_msg[:500]
-            }
+
+        error_msg = stderr_text or stdout_text
+        return {
+            "success": False,
+            "message": "Environment check failed",
+            "error": _truncate_output(error_msg),
+        }
     except asyncio.TimeoutError:
         return {
             "success": False,
             "message": "Environment check timeout",
-            "error": "Command execution exceeded 30 seconds"
+            "error": f"Command execution exceeded {int(ENV_CHECK_TIMEOUT_SECONDS)} seconds",
         }
     except FileNotFoundError:
         return {
             "success": False,
             "message": "uv command not found",
-            "error": "Please ensure uv is installed and configured in system PATH"
+            "error": "Please ensure uv is installed and configured in system PATH",
         }
     except Exception as e:
         return {
             "success": False,
             "message": "Environment check error",
-            "error": str(e)
+            "error": str(e),
         }
 
 
@@ -144,14 +169,11 @@ async def get_config_options():
             {"value": "creator", "label": "Creator Mode"},
         ],
         "save_options": [
-            {"value": "json", "label": "JSON File"},
-            {"value": "csv", "label": "CSV File"},
-            {"value": "excel", "label": "Excel File"},
-            {"value": "sqlite", "label": "SQLite Database"},
-            {"value": "db", "label": "MySQL Database"},
-            {"value": "mongodb", "label": "MongoDB Database"},
+            {"value": option.value, "label": SAVE_OPTION_LABELS[option.value]}
+            for option in SaveDataOptionEnum
         ],
     }
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8080)

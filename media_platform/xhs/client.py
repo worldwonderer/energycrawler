@@ -19,7 +19,7 @@
 
 import asyncio
 import json
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 from urllib.parse import urlencode
 
 import httpx
@@ -27,11 +27,7 @@ from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_not_excepti
 
 import config
 from base.base_crawler import AbstractApiClient
-from proxy.proxy_mixin import ProxyRefreshMixin
 from tools import utils
-
-if TYPE_CHECKING:
-    from proxy.proxy_ip_pool import ProxyIpPool
 
 try:
     from .exception import DataFetchError, IPBlockError, NoteNotFoundError
@@ -45,7 +41,7 @@ except ImportError:
     from media_platform.xhs.extractor import XiaoHongShuExtractor
 
 
-class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
+class XiaoHongShuClient(AbstractApiClient):
 
     def __init__(
         self,
@@ -54,7 +50,6 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         *,
         headers: Dict[str, str],
         cookie_dict: Dict[str, str],
-        proxy_ip_pool: Optional["ProxyIpPool"] = None,
         energy_adapter: Optional[Any] = None,  # Energy adapter for signature generation (required)
     ):
         self.proxy = proxy
@@ -69,8 +64,6 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         self.NOTE_ABNORMAL_CODE = -510001
         self.cookie_dict = cookie_dict
         self._extractor = XiaoHongShuExtractor()
-        # Initialize proxy pool (from ProxyRefreshMixin)
-        self.init_proxy_pool(proxy_ip_pool)
         # Energy browser adapter (required for signature generation)
         self._energy_adapter = energy_adapter
         if self._energy_adapter is None:
@@ -133,9 +126,6 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         Returns:
 
         """
-        # Check if proxy is expired before each request
-        await self._refresh_proxy_if_expired()
-
         # return response.text
         return_response = kwargs.pop("return_response", False)
         async with httpx.AsyncClient(proxy=self.proxy) as client:
@@ -200,9 +190,6 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         )
 
     async def get_note_media(self, url: str) -> Union[bytes, None]:
-        # Check if proxy is expired before request
-        await self._refresh_proxy_if_expired()
-
         async with httpx.AsyncClient(proxy=self.proxy) as client:
             try:
                 response = await client.request("GET", url, timeout=self.timeout)

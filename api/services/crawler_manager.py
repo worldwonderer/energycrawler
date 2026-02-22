@@ -28,7 +28,7 @@ from typing import Callable, Deque, List, Optional
 
 from ..schemas import CrawlerStartRequest, LogEntry
 from tools import utils
-from tools.preflight import preflight_for_platform
+from tools.preflight import build_preflight_failure_hint, preflight_for_platform
 
 
 class CrawlerManager:
@@ -37,6 +37,8 @@ class CrawlerManager:
     def __init__(
         self,
         max_workers: Optional[int] = None,
+        max_queue_size: Optional[int] = None,
+        max_spawn_retries: Optional[int] = None,
         process_factory: Optional[Callable[..., subprocess.Popen]] = None,
         enable_output_reader: bool = True,
     ):
@@ -44,6 +46,8 @@ class CrawlerManager:
         self._process_factory = process_factory or subprocess.Popen
         self._enable_output_reader = enable_output_reader
         self.max_workers = self._resolve_max_workers(max_workers)
+        self.max_queue_size = self._resolve_max_queue_size(max_queue_size)
+        self.max_spawn_retries = self._resolve_max_spawn_retries(max_spawn_retries)
 
         self._workers: List["_WorkerSlot"] = [
             _WorkerSlot(worker_id=index + 1) for index in range(self.max_workers)
@@ -63,6 +67,8 @@ class CrawlerManager:
         self._project_root = Path(__file__).parent.parent.parent
         # Log queue - for pushing to WebSocket
         self._log_queue: Optional[asyncio.Queue] = None
+        self._dispatch_retry_task: Optional[asyncio.Task] = None
+        self._dispatch_retry_delay_sec = self._resolve_dispatch_retry_delay()
 
     @property
     def logs(self) -> List[LogEntry]:
@@ -122,9 +128,10 @@ class CrawlerManager:
         """Enqueue crawler task and dispatch to idle workers."""
         ok, preflight_message = preflight_for_platform(config.platform.value, config.cookies)
         if not ok:
-            self._last_error = preflight_message
+            hint_message = build_preflight_failure_hint(config.platform.value, preflight_message)
+            self._last_error = hint_message
             entry = self._create_log_entry(
-                f"[PREFLIGHT] rejected task: {preflight_message}",
+                f"[PREFLIGHT] rejected task: {hint_message}",
                 "error",
             )
             await self._push_log(entry)
@@ -133,11 +140,31 @@ class CrawlerManager:
                 level="warning",
                 platform=config.platform.value,
                 crawler_type=config.crawler_type.value,
-                message=preflight_message,
+                message=hint_message,
             )
-            return {"accepted": False, "error": preflight_message}
+            return {"accepted": False, "error": hint_message}
 
         async with self._lock:
+            if self._stopping:
+                error = "Crawler cluster is stopping, reject new tasks"
+                entry = self._create_log_entry(f"[QUEUE] rejected task: {error}", "warning")
+                await self._push_log(entry)
+                return {"accepted": False, "error": error}
+
+            if len(self._pending_tasks) >= self.max_queue_size:
+                error = f"Crawler queue is full ({self.max_queue_size}), please retry later"
+                entry = self._create_log_entry(f"[QUEUE] rejected task: {error}", "warning")
+                await self._push_log(entry)
+                utils.log_event(
+                    "crawler_manager.queue.full",
+                    level="warning",
+                    platform=config.platform.value,
+                    crawler_type=config.crawler_type.value,
+                    queue_size=len(self._pending_tasks),
+                    max_queue_size=self.max_queue_size,
+                )
+                return {"accepted": False, "error": error}
+
             task = _QueuedTask(
                 task_id=self._next_task_id(),
                 config=config,
@@ -163,6 +190,41 @@ class CrawlerManager:
             await self._dispatch_pending_locked()
             snapshot = self._compose_status_locked()
 
+            if (
+                self._last_error
+                and task.task_id in snapshot["pending_task_ids"]
+                and task.spawn_attempts >= self.max_spawn_retries
+            ):
+                self._remove_pending_task_locked(task.task_id)
+                error = f"Failed to start task {task.task_id}: {self._last_error}"
+                entry = self._create_log_entry(f"[QUEUE] {error}", "error")
+                await self._push_log(entry)
+                self._refresh_runtime_status_locked()
+                snapshot = self._compose_status_locked()
+                return {
+                    "accepted": False,
+                    "error": error,
+                    "queued_tasks": snapshot["queued_tasks"],
+                    "running_workers": snapshot["running_workers"],
+                }
+
+            if (
+                self._last_error
+                and snapshot["running_workers"] == 0
+                and task.task_id not in snapshot["active_task_ids"]
+                and task.task_id not in snapshot["pending_task_ids"]
+                and task.spawn_attempts >= self.max_spawn_retries
+            ):
+                error = f"Failed to start task {task.task_id}: {self._last_error}"
+                entry = self._create_log_entry(f"[QUEUE] {error}", "error")
+                await self._push_log(entry)
+                return {
+                    "accepted": False,
+                    "error": error,
+                    "queued_tasks": snapshot["queued_tasks"],
+                    "running_workers": snapshot["running_workers"],
+                }
+
             return {
                 "accepted": True,
                 "task_id": task.task_id,
@@ -184,6 +246,9 @@ class CrawlerManager:
             self._stopping = True
             self.status = "stopping"
             self.current_config = None
+            if self._dispatch_retry_task and not self._dispatch_retry_task.done():
+                self._dispatch_retry_task.cancel()
+            self._dispatch_retry_task = None
             if pending_count:
                 self._pending_tasks.clear()
                 entry = self._create_log_entry(
@@ -367,24 +432,44 @@ class CrawlerManager:
                     env=worker_env,
                 )
             except Exception as exc:
-                self._pending_tasks.appendleft(task)
+                task.spawn_attempts += 1
                 self._last_error = str(exc)
                 self.status = "error"
-                entry = self._create_log_entry(
-                    f"[QUEUE] Failed to start task {task.task_id}: {exc}",
-                    "error",
-                )
+                retryable = task.spawn_attempts < self.max_spawn_retries
+                if retryable:
+                    self._pending_tasks.append(task)
+                    entry = self._create_log_entry(
+                        (
+                            f"[QUEUE] Failed to start task {task.task_id}: {exc}; "
+                            f"scheduled retry {task.spawn_attempts}/{self.max_spawn_retries}"
+                        ),
+                        "warning",
+                    )
+                    self._schedule_dispatch_retry_locked()
+                else:
+                    entry = self._create_log_entry(
+                        (
+                            f"[QUEUE] Failed to start task {task.task_id}: {exc}; "
+                            f"retries exhausted ({task.spawn_attempts}/{self.max_spawn_retries})"
+                        ),
+                        "error",
+                    )
                 await self._push_log(entry)
                 utils.log_event(
                     "crawler_manager.worker.spawn_failed",
-                    level="error",
+                    level="warning" if retryable else "error",
                     task_id=task.task_id,
                     platform=task.config.platform.value,
                     crawler_type=task.config.crawler_type.value,
                     worker_id=worker.worker_id,
                     error=str(exc),
+                    retryable=retryable,
+                    spawn_attempts=task.spawn_attempts,
+                    max_spawn_retries=self.max_spawn_retries,
                 )
-                break
+                if retryable:
+                    break
+                continue
 
             worker.process = process
             worker.task_id = task.task_id
@@ -471,6 +556,26 @@ class CrawlerManager:
                 return worker
         return None
 
+    def _remove_pending_task_locked(self, task_id: str) -> None:
+        self._pending_tasks = deque(
+            task for task in self._pending_tasks if task.task_id != task_id
+        )
+
+    def _schedule_dispatch_retry_locked(self) -> None:
+        if self._dispatch_retry_task and not self._dispatch_retry_task.done():
+            return
+        self._dispatch_retry_task = asyncio.create_task(self._retry_dispatch_after_delay())
+
+    async def _retry_dispatch_after_delay(self) -> None:
+        try:
+            await asyncio.sleep(self._dispatch_retry_delay_sec)
+            async with self._lock:
+                if self._stopping:
+                    return
+                await self._dispatch_pending_locked()
+        except asyncio.CancelledError:
+            return
+
     def _refresh_runtime_status_locked(self):
         running_workers = self._running_workers_count_locked()
         pending_tasks = len(self._pending_tasks)
@@ -527,6 +632,7 @@ class CrawlerManager:
             "error_message": self._last_error,
             "running_workers": len(running_task_ids),
             "total_workers": self.max_workers,
+            "max_queue_size": self.max_queue_size,
             "queued_tasks": len(pending_task_ids),
             "active_task_ids": running_task_ids,
             "pending_task_ids": pending_task_ids,
@@ -559,6 +665,7 @@ class CrawlerManager:
             "error_message": self._last_error,
             "running_workers": len(running_task_ids),
             "total_workers": self.max_workers,
+            "max_queue_size": self.max_queue_size,
             "queued_tasks": len(pending_task_ids),
             "active_task_ids": running_task_ids,
             "pending_task_ids": pending_task_ids,
@@ -576,11 +683,46 @@ class CrawlerManager:
 
         return max(1, min(candidate, 16))
 
+    def _resolve_max_queue_size(self, max_queue_size: Optional[int]) -> int:
+        if max_queue_size is not None:
+            candidate = max_queue_size
+        else:
+            raw_value = os.getenv("CRAWLER_MAX_QUEUE_SIZE", "100")
+            try:
+                candidate = int(raw_value)
+            except ValueError:
+                candidate = 100
+
+        return max(1, min(candidate, 10000))
+
+    def _resolve_max_spawn_retries(self, max_spawn_retries: Optional[int]) -> int:
+        if max_spawn_retries is not None:
+            candidate = max_spawn_retries
+        else:
+            raw_value = os.getenv("CRAWLER_WORKER_SPAWN_MAX_RETRIES", "2")
+            try:
+                candidate = int(raw_value)
+            except ValueError:
+                candidate = 2
+        return max(1, min(candidate, 10))
+
+    def _resolve_dispatch_retry_delay(self) -> float:
+        raw_value = os.getenv("CRAWLER_DISPATCH_RETRY_DELAY_SEC", "2")
+        try:
+            candidate = float(raw_value)
+        except ValueError:
+            candidate = 2.0
+        return max(0.1, min(candidate, 60.0))
+
     def _next_task_id(self) -> str:
         self._task_seq += 1
         return f"task-{self._task_seq:06d}"
 
     def _build_worker_env(self, task: "_QueuedTask", worker_id: int) -> dict:
+        prefix = os.getenv("ENERGY_BROWSER_ID_PREFIX", "energycrawler").strip() or "energycrawler"
+        browser_id = (
+            f"{prefix}_{task.config.platform.value}_w{worker_id}_{task.task_id}"
+        )
         return {
             **os.environ,
             "PYTHONUNBUFFERED": "1",
@@ -588,6 +730,7 @@ class CrawlerManager:
             "ENERGYCRAWLER_PLATFORM": task.config.platform.value,
             "ENERGYCRAWLER_CRAWLER_TYPE": task.config.crawler_type.value,
             "ENERGYCRAWLER_WORKER_ID": str(worker_id),
+            "ENERGYCRAWLER_BROWSER_ID": browser_id,
         }
 
 
@@ -596,6 +739,7 @@ class _QueuedTask:
     task_id: str
     config: CrawlerStartRequest
     enqueued_at: datetime
+    spawn_attempts: int = 0
 
 
 @dataclass

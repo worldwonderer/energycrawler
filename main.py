@@ -37,11 +37,9 @@ import cmd_arg
 import config
 from database import db
 from base.base_crawler import AbstractCrawler
-from tools.async_file_writer import AsyncFileWriter
 from tools import utils
 from tools.preflight import ensure_energy_service_or_raise
 from tools.safety import enforce_runtime_safety
-from var import crawler_type_var
 
 
 class CrawlerFactory:
@@ -84,20 +82,6 @@ def _flush_excel_if_needed() -> None:
         print(f"[Main] Error flushing Excel data: {e}")
 
 
-async def _generate_wordcloud_if_needed() -> None:
-    if config.SAVE_DATA_OPTION != "json" or not config.ENABLE_GET_WORDCLOUD:
-        return
-
-    try:
-        file_writer = AsyncFileWriter(
-            platform=config.PLATFORM,
-            crawler_type=crawler_type_var.get(),
-        )
-        await file_writer.generate_wordcloud_from_comments()
-    except Exception as e:
-        print(f"[Main] Error generating wordcloud: {e}")
-
-
 async def main() -> None:
     global crawler
 
@@ -121,9 +105,6 @@ async def main() -> None:
 
     _flush_excel_if_needed()
 
-    # Generate wordcloud after crawling is complete
-    # Only for JSON save mode
-    await _generate_wordcloud_if_needed()
     utils.log_event("crawler.run.complete", platform=config.PLATFORM, crawler_type=config.CRAWLER_TYPE)
 
 

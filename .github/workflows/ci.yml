@@ -25,5 +25,14 @@ jobs:
       - name: Compile check
         run: uv run python -m compileall -q main.py api media_platform tools config
 
+      - name: Markdown link check
+        run: uv run python tools/check_markdown_links.py --root .
+
+      - name: CLI smoke test
+        run: |
+          uv run energycrawler --help
+          uv run energycrawler init --no-check --force
+          uv run energycrawler cleanup-report --json --fail-on-findings
+
       - name: Unit tests
         run: uv run pytest -q tests --ignore=tests/e2e

@@ -21,7 +21,6 @@ from urllib.parse import urlparse
 
 import config
 from base.base_crawler import AbstractCrawler
-from proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
 from store import twitter as twitter_store
 from tools import utils
 from tools.safety import safe_sleep, calc_backoff_delay
@@ -60,13 +59,11 @@ class TwitterCrawler(AbstractCrawler):
     twitter_client: TwitterClient
     energy_adapter: TwitterEnergyAdapter
     dom_extractor: TwitterDOMExtractor
-    ip_proxy_pool: Optional[Any]
 
     def __init__(self) -> None:
         """Initialize Twitter crawler."""
         self.index_url = "https://x.com"
         self.user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        self.ip_proxy_pool = None
         self.twitter_client = None
         self.energy_adapter = None
         self.dom_extractor = None
@@ -96,20 +93,13 @@ class TwitterCrawler(AbstractCrawler):
         # Parse configuration
         self._parse_config()
 
-        # Set up proxy if enabled
-        httpx_proxy_format = None
-        if config.ENABLE_IP_PROXY:
-            self.ip_proxy_pool = await create_ip_pool(config.IP_PROXY_POOL_COUNT, enable_validate_ip=True)
-            ip_proxy_info: IpInfoModel = await self.ip_proxy_pool.get_proxy()
-            _, httpx_proxy_format = utils.format_proxy_info(ip_proxy_info)
-
         # Initialize Energy browser adapter
         utils.logger.info("[TwitterCrawler.start] Initializing Energy browser adapter...")
         await self._init_energy_adapter()
 
         # Create Twitter client
         utils.logger.info("[TwitterCrawler.start] Creating Twitter client...")
-        self.twitter_client = await self._create_twitter_client(httpx_proxy_format)
+        self.twitter_client = await self._create_twitter_client()
 
         # Check authentication
         if not await self.twitter_client.pong():
@@ -185,7 +175,7 @@ class TwitterCrawler(AbstractCrawler):
         address_parts = config.ENERGY_SERVICE_ADDRESS.split(":")
         host = address_parts[0] if len(address_parts) > 0 else "localhost"
         port = int(address_parts[1]) if len(address_parts) > 1 else 50051
-        browser_id = f"{config.ENERGY_BROWSER_ID_PREFIX}_twitter"
+        browser_id = config.ENERGY_BROWSER_ID
 
         self.energy_adapter = create_twitter_energy_adapter(
             host=host,
@@ -193,13 +183,6 @@ class TwitterCrawler(AbstractCrawler):
             browser_id=browser_id,
             headless=self._headless,
         )
-
-        # Connect to Energy service
-        self.energy_adapter.connect()
-
-        # Open domain once before cookie injection to ensure cookie scope is available.
-        self.energy_adapter.browser.navigate(browser_id, "https://x.com", 30000)
-        await asyncio.sleep(2)
 
         # Inject full cookie jar into browser session when provided.
         if self._cookie_header:
@@ -257,7 +240,7 @@ class TwitterCrawler(AbstractCrawler):
 
         utils.logger.info(f"[TwitterCrawler._init_energy_adapter] Energy adapter initialized (browser_id: {browser_id})")
 
-    async def _create_twitter_client(self, httpx_proxy_format: Optional[str] = None) -> TwitterClient:
+    async def _create_twitter_client(self) -> TwitterClient:
         """Create Twitter client with authentication."""
         # Get cookies from Energy adapter if available
         if self.energy_adapter:
@@ -271,7 +254,7 @@ class TwitterCrawler(AbstractCrawler):
 
         client = TwitterClient(
             timeout=30,
-            proxies={"http://": httpx_proxy_format, "https://": httpx_proxy_format} if httpx_proxy_format else None,
+            proxies=None,
             auth_token=self._auth_token,
             ct0=self._ct0,
             cookie_header=self._cookie_header,
@@ -735,6 +718,10 @@ class TwitterCrawler(AbstractCrawler):
 
         # Disconnect Energy adapter
         if self.energy_adapter:
+            try:
+                self.energy_adapter.browser.close_browser(self.energy_adapter.browser_id)
+            except Exception as e:
+                utils.logger.warning(f"[TwitterCrawler.close] Error closing Energy browser: {e}")
             try:
                 self.energy_adapter.disconnect()
                 utils.logger.info("[TwitterCrawler.close] Energy adapter disconnected")

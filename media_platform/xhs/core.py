@@ -27,12 +27,11 @@ Usage:
 """
 
 import asyncio
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Any
 
 import config
 from base.base_crawler import AbstractCrawler
 from model.m_xiaohongshu import NoteUrlInfo, CreatorUrlInfo
-from proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
 from store import xhs as xhs_store
 from tools import utils
 from tools.safety import safe_sleep
@@ -65,30 +64,22 @@ class XiaoHongShuCrawler(AbstractCrawler):
 
     xhs_client: XiaoHongShuClient
     energy_adapter: Any
-    ip_proxy_pool: Optional[Any]
 
     def __init__(self) -> None:
         self.index_url = "https://www.xiaohongshu.com"
         self.user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36"
-        self.ip_proxy_pool = None
         self.energy_adapter = None
         self._cookie_header = getattr(config, "COOKIES", "")
 
     async def start(self) -> None:
         """启动爬虫"""
-        httpx_proxy_format = None
-        if config.ENABLE_IP_PROXY:
-            self.ip_proxy_pool = await create_ip_pool(config.IP_PROXY_POOL_COUNT, enable_validate_ip=True)
-            ip_proxy_info: IpInfoModel = await self.ip_proxy_pool.get_proxy()
-            _, httpx_proxy_format = utils.format_proxy_info(ip_proxy_info)
-
         # 初始化 Energy 浏览器适配器
         utils.logger.info("[XiaoHongShuCrawler] Initializing Energy browser adapter...")
         await self._init_energy_adapter()
 
         # 创建客户端
         utils.logger.info("[XiaoHongShuCrawler] Creating XHS client...")
-        self.xhs_client = await self._create_xhs_client(httpx_proxy_format)
+        self.xhs_client = await self._create_xhs_client()
 
         # 检查登录状态
         if not await self.xhs_client.pong():
@@ -113,7 +104,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
         address_parts = config.ENERGY_SERVICE_ADDRESS.split(":")
         host = address_parts[0] if len(address_parts) > 0 else "localhost"
         port = int(address_parts[1]) if len(address_parts) > 1 else 50051
-        browser_id = f"{config.ENERGY_BROWSER_ID_PREFIX}_xhs"
+        browser_id = config.ENERGY_BROWSER_ID
 
         self.energy_adapter = create_xhs_energy_adapter(
             host=host,
@@ -123,19 +114,6 @@ class XiaoHongShuCrawler(AbstractCrawler):
             session_ttl_sec=getattr(config, "XHS_SIGNATURE_SESSION_TTL_SEC", 1800),
             failure_warn_threshold=getattr(config, "XHS_SIGNATURE_FAILURE_THRESHOLD", 3),
         )
-
-        # 连接到 Energy 服务
-        self.energy_adapter.connect()
-
-        # 尝试创建浏览器，如果已存在则忽略错误
-        try:
-            self.energy_adapter.browser.create_browser(browser_id, headless=config.ENERGY_HEADLESS)
-        except Exception as e:
-            if "already exists" not in str(e).lower():
-                raise
-
-        # 导航到小红书
-        self.energy_adapter.browser.navigate(browser_id, "https://www.xiaohongshu.com", 30000)
 
         # 如果配置了 COOKIES，优先注入到 Energy 浏览器会话，避免每次重启都需手动登录。
         if self._cookie_header:
@@ -162,7 +140,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
 
         utils.logger.info(f"[XiaoHongShuCrawler] Energy adapter initialized (browser_id: {browser_id})")
 
-    async def _create_xhs_client(self, httpx_proxy_format: Optional[str] = None) -> XiaoHongShuClient:
+    async def _create_xhs_client(self) -> XiaoHongShuClient:
         """创建 XHS 客户端"""
         # 从 Energy 获取 Cookie
         cookie_dict = self.energy_adapter.get_cookies()
@@ -171,7 +149,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
         cookie_str = "; ".join([f"{k}={v}" for k, v in cookie_dict.items()])
 
         client = XiaoHongShuClient(
-            proxy=httpx_proxy_format,
+            proxy=None,
             headers={
                 "accept": "application/json, text/plain, */*",
                 "accept-language": "zh-CN,zh;q=0.9",
@@ -191,7 +169,6 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 "Cookie": cookie_str,
             },
             cookie_dict=cookie_dict,
-            proxy_ip_pool=self.ip_proxy_pool,
             energy_adapter=self.energy_adapter,
         )
         return client
@@ -519,6 +496,10 @@ class XiaoHongShuCrawler(AbstractCrawler):
     async def close(self) -> None:
         """清理资源"""
         if self.energy_adapter:
+            try:
+                self.energy_adapter.browser.close_browser(self.energy_adapter.browser_id)
+            except Exception as e:
+                utils.logger.warning(f"[XiaoHongShuCrawler.close] Error closing Energy browser: {e}")
             try:
                 self.energy_adapter.disconnect()
                 utils.logger.info("[XiaoHongShuCrawler.close] Energy adapter disconnected")

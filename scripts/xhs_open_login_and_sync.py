@@ -105,7 +105,7 @@ def main() -> None:
             f"cookies={result.get('cookie_count')} message={result.get('message')}"
         )
         print(
-            "[done] verify with: python3 scripts/auth_cli.py status "
+            "[done] verify with: uv run energycrawler auth status "
             f"--xhs-browser-id {args.browser_id} --skip-browser-check"
         )
 
