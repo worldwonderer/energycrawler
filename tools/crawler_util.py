@@ -17,12 +17,12 @@
 # 详细许可条款请参阅项目根目录下的LICENSE文件。
 # 使用本代码即表示您同意遵守上述原则和LICENSE中的所有条款。
 
-import urllib
-import urllib.parse
-from typing import Dict, Optional, Tuple, cast
+from typing import Dict
+from urllib.parse import parse_qsl, urlparse
 
-def convert_str_cookie_to_dict(cookie_str: str) -> Dict:
-    cookie_dict: Dict[str, str] = dict()
+
+def convert_str_cookie_to_dict(cookie_str: str) -> Dict[str, str]:
+    cookie_dict: Dict[str, str] = {}
     if not cookie_str:
         return cookie_dict
     for cookie in cookie_str.split(";"):
@@ -42,37 +42,9 @@ def convert_str_cookie_to_dict(cookie_str: str) -> Dict:
     return cookie_dict
 
 
-def format_proxy_info(ip_proxy_info) -> Tuple[Optional[Dict], Optional[str]]:
-    """Format proxy info for browser clients and httpx."""
-    # fix circular import issue
-    from proxy.proxy_ip_pool import IpInfoModel
-    ip_proxy_info = cast(IpInfoModel, ip_proxy_info)
-
-    # Browser proxy server should be in format "host:port" without protocol prefix
-    server = f"{ip_proxy_info.ip}:{ip_proxy_info.port}"
-
-    browser_proxy = {
-        "server": server,
-    }
-
-    # Only add username and password if they are not empty
-    if ip_proxy_info.user and ip_proxy_info.password:
-        browser_proxy["username"] = ip_proxy_info.user
-        browser_proxy["password"] = ip_proxy_info.password
-
-    # httpx 0.28.1 requires passing proxy URL string directly, not a dictionary
-    if ip_proxy_info.user and ip_proxy_info.password:
-        httpx_proxy = f"http://{ip_proxy_info.user}:{ip_proxy_info.password}@{ip_proxy_info.ip}:{ip_proxy_info.port}"
-    else:
-        httpx_proxy = f"http://{ip_proxy_info.ip}:{ip_proxy_info.port}"
-    return browser_proxy, httpx_proxy
-
-
-def extract_url_params_to_dict(url: str) -> Dict:
+def extract_url_params_to_dict(url: str) -> Dict[str, str]:
     """Extract URL parameters to dict"""
-    url_params_dict = dict()
     if not url:
-        return url_params_dict
-    parsed_url = urllib.parse.urlparse(url)
-    url_params_dict = dict(urllib.parse.parse_qsl(parsed_url.query))
-    return url_params_dict
+        return {}
+    parsed_url = urlparse(url)
+    return dict(parse_qsl(parsed_url.query))

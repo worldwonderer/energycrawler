@@ -84,16 +84,6 @@ LOGIN_TYPE = os.getenv("LOGIN_TYPE", "cookie").strip() or "cookie"  # cookie onl
 COOKIES = os.getenv("COOKIES", "").strip()
 CRAWLER_TYPE = os.getenv("CRAWLER_TYPE", "search").strip() or "search"
 # Crawling type: search (keyword search) | detail (post details) | creator (creator homepage data)
-# Whether to enable IP proxy
-ENABLE_IP_PROXY = _getenv_bool("ENABLE_IP_PROXY", False)
-
-# Number of proxy IP pools
-IP_PROXY_POOL_COUNT = _getenv_int("IP_PROXY_POOL_COUNT", 2)
-
-# Proxy IP provider name
-IP_PROXY_PROVIDER_NAME = os.getenv("IP_PROXY_PROVIDER_NAME", "kuaidaili").strip() or "kuaidaili"
-# kuaidaili | wandouhttp
-
 # Setting to True will not open the browser (headless browser)
 # Setting False will open a browser
 # If Xiaohongshu keeps scanning the code to log in but fails, open the browser and manually pass the sliding verification code.

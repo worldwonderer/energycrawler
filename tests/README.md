@@ -157,7 +157,7 @@ cd tests/e2e
 ### E2E Tests
 
 - `test_basic_flow.py`: Browser lifecycle, navigation, cookies, JS execution
-- `test_signature.py`: Signature generation, proxy settings, error handling
+- `test_signature.py`: Signature generation and error handling
 
 ## Test Markers
 
