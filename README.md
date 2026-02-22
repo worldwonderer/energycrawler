@@ -51,7 +51,7 @@ uv run energycrawler energy ensure
 统一入口（等价命令）：
 
 ```bash
-python3 scripts/energy_service_cli.py ensure
+uv run energycrawler energy ensure
 ```
 
 手动健康检查：
@@ -69,7 +69,7 @@ uv run python scripts/check_xhs_signature_runtime.py --host localhost --port 500
 统一入口（等价命令）：
 
 ```bash
-python3 scripts/energy_service_cli.py check --host localhost --port 50051
+uv run energycrawler energy check --host localhost --port 50051
 ```
 
 ### 3. 配置参数
@@ -95,7 +95,7 @@ uv run energycrawler auth export --platform all --xhs-browser-id manual_login_xh
 统一入口（等价命令）：
 
 ```bash
-python3 scripts/auth_cli.py export --platform all --xhs-browser-id manual_login_xhs --x-browser-id manual_login_x
+uv run energycrawler auth export --platform all --xhs-browser-id manual_login_xhs --x-browser-id manual_login_x
 ```
 
 登录态快速检查：
@@ -107,7 +107,7 @@ uv run energycrawler auth status --host localhost --port 50051
 统一入口（等价命令）：
 
 ```bash
-python3 scripts/auth_cli.py status --host localhost --port 50051
+uv run energycrawler auth status --host localhost --port 50051
 ```
 
 推荐登录流（直接打开小红书登录页，在 Energy 内完成扫码/确认，再自动同步）：
@@ -227,7 +227,7 @@ uv run energycrawler crawl -- --help
 uv run energycrawler doctor
 ```
 
-输出清理候选报告（未引用文档图片/疑似历史汇总文档）：
+输出严格清理报告（未引用文档图片、疑似历史汇总文档、旧命令、绝对路径、尾随空格）：
 
 ```bash
 uv run energycrawler cleanup-report --json

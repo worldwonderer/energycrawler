@@ -44,7 +44,7 @@ uv run energycrawler crawl -- --help
 # 一键环境体检
 uv run energycrawler doctor
 
-# 清理候选报告
+# 严格清理报告（含旧命令/绝对路径/尾随空格）
 uv run energycrawler cleanup-report --json
 ```
 

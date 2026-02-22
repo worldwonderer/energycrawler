@@ -32,7 +32,7 @@ jobs:
         run: |
           uv run energycrawler --help
           uv run energycrawler init --no-check --force
-          uv run energycrawler cleanup-report --json
+          uv run energycrawler cleanup-report --json --fail-on-findings
 
       - name: Unit tests
         run: uv run pytest -q tests --ignore=tests/e2e
