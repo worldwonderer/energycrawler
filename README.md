@@ -158,7 +158,7 @@ uv run python scripts/xhs_qr_login_flow.py --api-base http://localhost:8080
 uv run energycrawler auth xhs-qr-login --api-base http://localhost:8080
 ```
 
-该脚本默认会把二维码页自动打开到对应 Energy 浏览器窗口，并提示扫码确认。  
+该脚本默认会把二维码页自动打开到对应 Energy 浏览器窗口，并提示扫码确认。
 如不需要自动打开，可加 `--no-open-in-energy`。
 
 服务拉起相关环境变量：

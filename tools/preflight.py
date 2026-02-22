@@ -118,27 +118,27 @@ def build_preflight_failure_hint(platform: str, message: str) -> str:
     if "unreachable" in message.lower() and "energy service" in message.lower():
         hint_lines.extend(
             [
-                "1) Start/recover service: python3 scripts/energy_service_cli.py ensure",
-                "2) Verify health: python3 scripts/energy_service_cli.py check --json",
+                "1) Start/recover service: uv run energycrawler energy ensure",
+                "2) Verify health: uv run energycrawler energy check --json",
             ]
         )
     elif normalized in {"x", "twitter"} and "missing twitter auth material" in message.lower():
         hint_lines.extend(
             [
-                "1) Export from logged-in browser: python3 scripts/auth_cli.py export --platform x",
+                "1) Export from logged-in browser: uv run energycrawler auth export --platform x",
                 "2) Or set env vars: TWITTER_AUTH_TOKEN / TWITTER_CT0 (or TWITTER_COOKIE)",
-                "3) Validate login state: python3 scripts/auth_cli.py status --json",
+                "3) Validate login state: uv run energycrawler auth status --json",
             ]
         )
     elif normalized in {"xhs", "xiaohongshu"} and "canary" in message.lower():
         hint_lines.extend(
             [
-                "1) Probe signature runtime: python3 scripts/energy_service_cli.py check --json",
+                "1) Probe signature runtime: uv run energycrawler energy check --json",
                 "2) Run canary details: uv run python scripts/check_xhs_signature_runtime.py --json",
             ]
         )
     else:
-        hint_lines.append("1) Re-run with doctor: python3 scripts/energycrawler_cli.py doctor")
+        hint_lines.append("1) Re-run with doctor: uv run energycrawler doctor")
 
     return "\n".join(hint_lines)
 
