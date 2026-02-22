@@ -28,7 +28,7 @@ from typing import Callable, Deque, List, Optional
 
 from ..schemas import CrawlerStartRequest, LogEntry
 from tools import utils
-from tools.preflight import preflight_for_platform
+from tools.preflight import build_preflight_failure_hint, preflight_for_platform
 
 
 class CrawlerManager:
@@ -122,9 +122,10 @@ class CrawlerManager:
         """Enqueue crawler task and dispatch to idle workers."""
         ok, preflight_message = preflight_for_platform(config.platform.value, config.cookies)
         if not ok:
-            self._last_error = preflight_message
+            hint_message = build_preflight_failure_hint(config.platform.value, preflight_message)
+            self._last_error = hint_message
             entry = self._create_log_entry(
-                f"[PREFLIGHT] rejected task: {preflight_message}",
+                f"[PREFLIGHT] rejected task: {hint_message}",
                 "error",
             )
             await self._push_log(entry)
@@ -133,9 +134,9 @@ class CrawlerManager:
                 level="warning",
                 platform=config.platform.value,
                 crawler_type=config.crawler_type.value,
-                message=preflight_message,
+                message=hint_message,
             )
-            return {"accepted": False, "error": preflight_message}
+            return {"accepted": False, "error": hint_message}
 
         async with self._lock:
             task = _QueuedTask(

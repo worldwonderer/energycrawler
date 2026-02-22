@@ -28,6 +28,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .routers import crawler_router, data_router, websocket_router, auth_router
+from .schemas import SaveDataOptionEnum
 
 app = FastAPI(
     title="EnergyCrawler API",
@@ -134,6 +135,15 @@ async def get_platforms():
 @app.get("/api/config/options")
 async def get_config_options():
     """Get all configuration options"""
+    save_option_labels = {
+        SaveDataOptionEnum.JSON.value: "JSON File",
+        SaveDataOptionEnum.CSV.value: "CSV File",
+        SaveDataOptionEnum.EXCEL.value: "Excel File",
+        SaveDataOptionEnum.SQLITE.value: "SQLite Database",
+        SaveDataOptionEnum.DB.value: "MySQL Database",
+        SaveDataOptionEnum.MONGODB.value: "MongoDB Database",
+        SaveDataOptionEnum.POSTGRES.value: "PostgreSQL Database",
+    }
     return {
         "login_types": [
             {"value": "cookie", "label": "Cookie Login"},
@@ -144,12 +154,8 @@ async def get_config_options():
             {"value": "creator", "label": "Creator Mode"},
         ],
         "save_options": [
-            {"value": "json", "label": "JSON File"},
-            {"value": "csv", "label": "CSV File"},
-            {"value": "excel", "label": "Excel File"},
-            {"value": "sqlite", "label": "SQLite Database"},
-            {"value": "db", "label": "MySQL Database"},
-            {"value": "mongodb", "label": "MongoDB Database"},
+            {"value": option.value, "label": save_option_labels[option.value]}
+            for option in SaveDataOptionEnum
         ],
     }
 

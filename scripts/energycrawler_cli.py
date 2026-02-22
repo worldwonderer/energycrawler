@@ -14,6 +14,7 @@ from typing import List
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = PROJECT_ROOT / "scripts"
+TOOLS_DIR = PROJECT_ROOT / "tools"
 
 
 def _normalize_passthrough_args(raw: List[str]) -> List[str]:
@@ -48,6 +49,23 @@ def _energy_cmd(args: argparse.Namespace) -> int:
     energy_args = _normalize_passthrough_args(args.args)
     cmd = _build_python_target_command(SCRIPTS_DIR / "energy_service_cli.py", energy_args)
     return _run_command(cmd)
+
+
+def _run_cleanup_report(*, json_output: bool, fail_on_findings: bool) -> int:
+    cmd_args = []
+    if json_output:
+        cmd_args.append("--json")
+    if fail_on_findings:
+        cmd_args.append("--fail-on-findings")
+    cmd = _build_python_target_command(TOOLS_DIR / "cleanup_report.py", cmd_args)
+    return _run_command(cmd)
+
+
+def _cleanup_report_cmd(args: argparse.Namespace) -> int:
+    return _run_cleanup_report(
+        json_output=args.json,
+        fail_on_findings=args.fail_on_findings,
+    )
 
 
 def _doctor_cmd(args: argparse.Namespace) -> int:
@@ -111,7 +129,60 @@ def _doctor_cmd(args: argparse.Namespace) -> int:
         print("Try: python3 scripts/energy_service_cli.py ensure")
         return 1
 
+    if getattr(args, "cleanup_report", False):
+        print("[doctor] Running: Cleanup candidate report")
+        cleanup_code = _run_cleanup_report(
+            json_output=args.json,
+            fail_on_findings=getattr(args, "cleanup_fail_on_findings", False),
+        )
+        if cleanup_code != 0:
+            return cleanup_code
+
     print("[doctor] Summary: all checks passed")
+    return 0
+
+
+def _resolve_project_path(raw: str) -> Path:
+    path = Path(raw)
+    if path.is_absolute():
+        return path
+    return PROJECT_ROOT / path
+
+
+def _init_cmd(args: argparse.Namespace) -> int:
+    template_path = _resolve_project_path(args.template)
+    env_path = _resolve_project_path(args.env_file)
+
+    if not template_path.exists():
+        print(f"[init] Template not found: {template_path}", file=sys.stderr)
+        return 1
+
+    if env_path.exists() and not args.force:
+        print(f"[init] Keeping existing env file: {env_path}")
+    else:
+        env_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(template_path, env_path)
+        print(f"[init] Wrote env file from template: {env_path}")
+
+    if args.check:
+        print("[init] Running basic health check (energy only)...")
+        doctor_args = argparse.Namespace(
+            host=args.host,
+            port=args.port,
+            timeout=args.timeout,
+            skip_login_check=True,
+            json=args.json,
+            cleanup_report=False,
+            cleanup_fail_on_findings=False,
+        )
+        check_code = _doctor_cmd(doctor_args)
+        if check_code != 0 and args.strict_check:
+            return check_code
+
+    print("[init] Next steps:")
+    print("1) Ensure Energy service is healthy: uv run energycrawler energy ensure")
+    print("2) Check auth readiness: uv run energycrawler auth status --json")
+    print("3) Start a safe crawl: uv run energycrawler crawl -- --platform xhs --type search --keywords 新能源")
     return 0
 
 
@@ -120,10 +191,11 @@ def _build_parser() -> argparse.ArgumentParser:
         description="EnergyCrawler unified CLI",
         epilog=(
             "Examples:\n"
-            "  python3 scripts/energycrawler_cli.py energy ensure\n"
-            "  python3 scripts/energycrawler_cli.py auth status --json\n"
-            "  python3 scripts/energycrawler_cli.py crawl -- --platform xhs --type search --keywords 新能源\n"
-            "  python3 scripts/energycrawler_cli.py doctor"
+            "  uv run energycrawler init\n"
+            "  uv run energycrawler energy ensure\n"
+            "  uv run energycrawler auth status --json\n"
+            "  uv run energycrawler crawl -- --platform xhs --type search --keywords 新能源\n"
+            "  uv run energycrawler doctor --cleanup-report"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -158,8 +230,34 @@ def _build_parser() -> argparse.ArgumentParser:
     doctor_parser.add_argument("--port", type=int, default=50051)
     doctor_parser.add_argument("--timeout", type=float, default=8.0)
     doctor_parser.add_argument("--skip-login-check", action="store_true")
+    doctor_parser.add_argument("--cleanup-report", action="store_true")
+    doctor_parser.add_argument("--cleanup-fail-on-findings", action="store_true")
     doctor_parser.add_argument("--json", action="store_true")
     doctor_parser.set_defaults(handler=_doctor_cmd)
+
+    init_parser = subparsers.add_parser("init", help="Bootstrap .env and run basic checks")
+    init_parser.add_argument("--template", default=".env.quickstart.example")
+    init_parser.add_argument("--env-file", default=".env")
+    init_parser.add_argument("--force", action="store_true")
+    init_parser.add_argument(
+        "--check",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    init_parser.add_argument("--strict-check", action="store_true")
+    init_parser.add_argument("--host", default="localhost")
+    init_parser.add_argument("--port", type=int, default=50051)
+    init_parser.add_argument("--timeout", type=float, default=8.0)
+    init_parser.add_argument("--json", action="store_true")
+    init_parser.set_defaults(handler=_init_cmd)
+
+    cleanup_parser = subparsers.add_parser(
+        "cleanup-report",
+        help="Report cleanup candidates (unused docs/images)",
+    )
+    cleanup_parser.add_argument("--json", action="store_true")
+    cleanup_parser.add_argument("--fail-on-findings", action="store_true")
+    cleanup_parser.set_defaults(handler=_cleanup_report_cmd)
 
     return parser
 

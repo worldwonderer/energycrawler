@@ -1,6 +1,10 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "energycrawler"
-author = "EnergyCrawler Maintainers"
+authors = [{name = "EnergyCrawler Maintainers"}]
 version = "0.1.0"
 description = "A lightweight social media crawler focused on Xiaohongshu and X."
 readme = "README.md"
@@ -40,6 +44,12 @@ dependencies = [
     "websockets>=15.0.1",
     "asyncpg>=0.31.0",
 ]
+
+[project.scripts]
+energycrawler = "scripts.energycrawler_cli:main"
+
+[tool.setuptools.packages.find]
+include = ["scripts*"]
 
 [[tool.uv.index]]
 url = "https://pypi.tuna.tsinghua.edu.cn/simple"
