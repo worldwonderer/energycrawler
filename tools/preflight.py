@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import socket
+from pathlib import Path
 from typing import Tuple
 
 import config
@@ -51,6 +52,49 @@ def has_twitter_auth_material(cookie_header: str = "") -> bool:
     return bool(auth_token and ct0)
 
 
+def run_xhs_signature_canary() -> Tuple[bool, str]:
+    """Run optional XHS signature runtime canary."""
+    try:
+        from scripts.check_xhs_signature_runtime import DEFAULT_BASELINE, load_baseline, run_probe
+    except Exception as exc:
+        return False, f"xhs signature canary unavailable: {exc}"
+
+    host, port = parse_energy_service_address(config.ENERGY_SERVICE_ADDRESS)
+    timeout_sec = float(getattr(config, "XHS_SIGNATURE_CANARY_TIMEOUT_SEC", 8.0))
+    baseline: dict | None = None
+
+    configured_baseline = getattr(config, "XHS_SIGNATURE_CANARY_BASELINE_PATH", "").strip()
+    baseline_path = Path(configured_baseline) if configured_baseline else Path(DEFAULT_BASELINE)
+    if baseline_path.exists():
+        try:
+            baseline = load_baseline(baseline_path)
+        except Exception as exc:
+            return False, f"xhs signature canary baseline invalid: {exc}"
+
+    try:
+        payload = run_probe(
+            host=host,
+            port=port,
+            timeout_sec=timeout_sec,
+            browser_id=None,
+            headless=bool(getattr(config, "ENERGY_HEADLESS", True)),
+            baseline=baseline,
+            keep_browser=False,
+        )
+    except Exception as exc:
+        return False, f"xhs signature canary execution failed: {exc}"
+
+    if payload.get("healthy"):
+        return True, "xhs signature canary passed"
+
+    checks = payload.get("evaluation", {}).get("checks", [])
+    failed = [item for item in checks if not item.get("ok")]
+    if failed:
+        detail = failed[0].get("detail", "")
+        return False, f"xhs signature canary failed: {failed[0].get('name')} ({detail})"
+    return False, "xhs signature canary failed"
+
+
 def preflight_for_platform(platform: str, cookie_header: str = "") -> Tuple[bool, str]:
     ok, message = check_energy_service_reachable()
     if not ok:
@@ -59,11 +103,50 @@ def preflight_for_platform(platform: str, cookie_header: str = "") -> Tuple[bool
     if platform in {"x", "twitter"} and not has_twitter_auth_material(cookie_header):
         return False, "Missing Twitter auth material: require auth_token and ct0 (via TWITTER_COOKIE or env vars)"
 
+    if platform in {"xhs", "xiaohongshu"} and bool(getattr(config, "XHS_SIGNATURE_CANARY_ENABLED", False)):
+        canary_ok, canary_msg = run_xhs_signature_canary()
+        if not canary_ok:
+            return False, canary_msg
+
     return True, "preflight passed"
 
 
-def ensure_energy_service_or_raise() -> None:
-    ok, message = check_energy_service_reachable()
+def build_preflight_failure_hint(platform: str, message: str) -> str:
+    normalized = (platform or "").strip().lower()
+    hint_lines = [message, "", "Actionable next steps:"]
+
+    if "unreachable" in message.lower() and "energy service" in message.lower():
+        hint_lines.extend(
+            [
+                "1) Start/recover service: python3 scripts/energy_service_cli.py ensure",
+                "2) Verify health: python3 scripts/energy_service_cli.py check --json",
+            ]
+        )
+    elif normalized in {"x", "twitter"} and "missing twitter auth material" in message.lower():
+        hint_lines.extend(
+            [
+                "1) Export from logged-in browser: python3 scripts/auth_cli.py export --platform x",
+                "2) Or set env vars: TWITTER_AUTH_TOKEN / TWITTER_CT0 (or TWITTER_COOKIE)",
+                "3) Validate login state: python3 scripts/auth_cli.py status --json",
+            ]
+        )
+    elif normalized in {"xhs", "xiaohongshu"} and "canary" in message.lower():
+        hint_lines.extend(
+            [
+                "1) Probe signature runtime: python3 scripts/energy_service_cli.py check --json",
+                "2) Run canary details: uv run python scripts/check_xhs_signature_runtime.py --json",
+            ]
+        )
+    else:
+        hint_lines.append("1) Re-run with doctor: python3 scripts/energycrawler_cli.py doctor")
+
+    return "\n".join(hint_lines)
+
+
+def ensure_energy_service_or_raise(platform: str = "") -> None:
+    check_platform = (platform or getattr(config, "PLATFORM", "")).strip().lower()
+    ok, message = preflight_for_platform(check_platform, getattr(config, "COOKIES", ""))
     if not ok:
-        raise RuntimeError(message)
+        raise RuntimeError(build_preflight_failure_hint(check_platform, message))
+
     utils.log_event("preflight.energy.ok", message=message)

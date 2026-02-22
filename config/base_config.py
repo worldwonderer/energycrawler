@@ -48,47 +48,74 @@ def _parse_cookie_header(cookie_header: str) -> dict[str, str]:
     return cookie_dict
 
 
+def _getenv_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _getenv_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw.strip())
+    except ValueError:
+        return default
+
+
+def _getenv_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw.strip())
+    except ValueError:
+        return default
+
+
 _load_project_env()
 
 # Basic configuration
-PLATFORM = "xhs"  # Platform, xhs | x
-KEYWORDS = "编程副业,编程兼职"  # Keyword search configuration, separated by English commas
-LOGIN_TYPE = "cookie"  # cookie only
+PLATFORM = os.getenv("PLATFORM", "xhs").strip() or "xhs"  # Platform, xhs | x
+KEYWORDS = os.getenv("KEYWORDS", "编程副业,编程兼职").strip() or "编程副业,编程兼职"
+LOGIN_TYPE = os.getenv("LOGIN_TYPE", "cookie").strip() or "cookie"  # cookie only
 COOKIES = os.getenv("COOKIES", "").strip()
-CRAWLER_TYPE = (
-    "search"  # Crawling type, search (keyword search) | detail (post details) | creator (creator homepage data)
-)
+CRAWLER_TYPE = os.getenv("CRAWLER_TYPE", "search").strip() or "search"
+# Crawling type: search (keyword search) | detail (post details) | creator (creator homepage data)
 # Whether to enable IP proxy
-ENABLE_IP_PROXY = False
+ENABLE_IP_PROXY = _getenv_bool("ENABLE_IP_PROXY", False)
 
 # Number of proxy IP pools
-IP_PROXY_POOL_COUNT = 2
+IP_PROXY_POOL_COUNT = _getenv_int("IP_PROXY_POOL_COUNT", 2)
 
 # Proxy IP provider name
-IP_PROXY_PROVIDER_NAME = "kuaidaili"  # kuaidaili | wandouhttp
+IP_PROXY_PROVIDER_NAME = os.getenv("IP_PROXY_PROVIDER_NAME", "kuaidaili").strip() or "kuaidaili"
+# kuaidaili | wandouhttp
 
 # Setting to True will not open the browser (headless browser)
 # Setting False will open a browser
 # If Xiaohongshu keeps scanning the code to log in but fails, open the browser and manually pass the sliding verification code.
-HEADLESS = False
+HEADLESS = _getenv_bool("HEADLESS", False)
 
 # Whether to save login status
-SAVE_LOGIN_STATE = True
+SAVE_LOGIN_STATE = _getenv_bool("SAVE_LOGIN_STATE", True)
 
 # ==================== Energy Browser Configuration ====================
 # Whether to enable Energy browser mode - use Energy gRPC service for browser automation
 # When enabled, signature generation will use the Energy browser service instead of legacy browser drivers
 # This provides a centralized browser service that can be shared across multiple crawler instances
-ENABLE_ENERGY_BROWSER = True  # Default enabled for better signature generation
+ENABLE_ENERGY_BROWSER = _getenv_bool("ENABLE_ENERGY_BROWSER", True)
 
 # Energy service address (host:port)
-ENERGY_SERVICE_ADDRESS = "localhost:50051"
+ENERGY_SERVICE_ADDRESS = os.getenv("ENERGY_SERVICE_ADDRESS", "localhost:50051").strip() or "localhost:50051"
 
 # Whether to run Energy browser in headless mode
-ENERGY_HEADLESS = True
+ENERGY_HEADLESS = _getenv_bool("ENERGY_HEADLESS", True)
 
 # Browser instance ID prefix for Energy service (will be appended with platform name)
-ENERGY_BROWSER_ID_PREFIX = "energycrawler"
+ENERGY_BROWSER_ID_PREFIX = os.getenv("ENERGY_BROWSER_ID_PREFIX", "energycrawler").strip() or "energycrawler"
 
 # ==================== Per-Platform Energy Configuration ====================
 # These settings allow fine-grained control over which supported platforms use Energy browser.
@@ -96,39 +123,40 @@ XHS_ENABLE_ENERGY = ENABLE_ENERGY_BROWSER
 TWITTER_ENABLE_ENERGY = ENABLE_ENERGY_BROWSER
 
 # Data saving type option configuration, supports six types: csv, db, json, sqlite, excel, postgres. It is best to save to DB, with deduplication function.
-SAVE_DATA_OPTION = "json"  # csv or db or json or sqlite or excel or postgres
+SAVE_DATA_OPTION = os.getenv("SAVE_DATA_OPTION", "json").strip() or "json"
+# csv or db or json or sqlite or excel or postgres
 
 # Data saving path, if not specified by default, it will be saved to the data folder.
-SAVE_DATA_PATH = ""
+SAVE_DATA_PATH = os.getenv("SAVE_DATA_PATH", "").strip()
 
 # Browser file configuration cached by the user's browser
 USER_DATA_DIR = "%s_user_data_dir"  # %s will be replaced by platform name
 
 # The number of pages to start crawling starts from the first page by default
-START_PAGE = 1
+START_PAGE = _getenv_int("START_PAGE", 1)
 
 # Control the number of crawled videos/posts
-CRAWLER_MAX_NOTES_COUNT = 5
+CRAWLER_MAX_NOTES_COUNT = _getenv_int("CRAWLER_MAX_NOTES_COUNT", 5)
 
 # Controlling the number of concurrent crawlers
-MAX_CONCURRENCY_NUM = 1
+MAX_CONCURRENCY_NUM = _getenv_int("MAX_CONCURRENCY_NUM", 1)
 
 # Whether to enable crawling media mode (including image or video resources), crawling media is not enabled by default
-ENABLE_GET_MEIDAS = False
+ENABLE_GET_MEIDAS = _getenv_bool("ENABLE_GET_MEIDAS", False)
 
 # Whether to enable comment crawling mode. Comment crawling is enabled by default.
-ENABLE_GET_COMMENTS = True
+ENABLE_GET_COMMENTS = _getenv_bool("ENABLE_GET_COMMENTS", True)
 
 # Control the number of crawled first-level comments (single video/post)
-CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES = 3
+CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES = _getenv_int("CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES", 3)
 
 # Whether to enable the mode of crawling second-level comments. By default, crawling of second-level comments is not enabled.
 # If the old version of the project uses db, you need to refer to schema/tables.sql line 287 to add table fields.
-ENABLE_GET_SUB_COMMENTS = False
+ENABLE_GET_SUB_COMMENTS = _getenv_bool("ENABLE_GET_SUB_COMMENTS", False)
 
 # word cloud related
 # Whether to enable generating comment word clouds
-ENABLE_GET_WORDCLOUD = False
+ENABLE_GET_WORDCLOUD = _getenv_bool("ENABLE_GET_WORDCLOUD", False)
 # Custom words and their groups
 # Add rule: xx:yy where xx is a custom-added phrase, and yy is the group name to which the phrase xx is assigned.
 CUSTOM_WORDS = {
@@ -143,7 +171,7 @@ STOP_WORDS_FILE = "./docs/hit_stopwords.txt"
 FONT_PATH = "./docs/STZHONGS.TTF"
 
 # Crawl interval
-CRAWLER_MAX_SLEEP_SEC = 10
+CRAWLER_MAX_SLEEP_SEC = _getenv_float("CRAWLER_MAX_SLEEP_SEC", 10)
 
 # ==================== Safety Controls ====================
 # Hard safety ceilings to reduce account risk for small-batch crawling.
@@ -153,6 +181,13 @@ CRAWLER_MIN_SLEEP_SEC = float(os.getenv("CRAWLER_MIN_SLEEP_SEC", "6"))
 CRAWLER_SLEEP_JITTER_SEC = float(os.getenv("CRAWLER_SLEEP_JITTER_SEC", "1.2"))
 CRAWLER_RETRY_BASE_DELAY_SEC = float(os.getenv("CRAWLER_RETRY_BASE_DELAY_SEC", "2"))
 CRAWLER_RETRY_MAX_DELAY_SEC = float(os.getenv("CRAWLER_RETRY_MAX_DELAY_SEC", "30"))
+
+# ==================== XHS Signature Runtime Controls ====================
+XHS_SIGNATURE_CANARY_ENABLED = os.getenv("XHS_SIGNATURE_CANARY_ENABLED", "false").lower() == "true"
+XHS_SIGNATURE_CANARY_TIMEOUT_SEC = float(os.getenv("XHS_SIGNATURE_CANARY_TIMEOUT_SEC", "8"))
+XHS_SIGNATURE_CANARY_BASELINE_PATH = os.getenv("XHS_SIGNATURE_CANARY_BASELINE_PATH", "").strip()
+XHS_SIGNATURE_SESSION_TTL_SEC = int(os.getenv("XHS_SIGNATURE_SESSION_TTL_SEC", "1800"))
+XHS_SIGNATURE_FAILURE_THRESHOLD = int(os.getenv("XHS_SIGNATURE_FAILURE_THRESHOLD", "3"))
 
 # =================================== Twitter/X.com Configuration ===================================
 

@@ -12,7 +12,9 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-ENERGY_SERVICE_DIR="/Users/pite/EnergyCrawler/energy-service"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+ENERGY_SERVICE_DIR="${PROJECT_ROOT}/energy-service"
 ENERGY_SERVICE_BIN="${ENERGY_SERVICE_DIR}/energy-service"
 
 # Logging functions

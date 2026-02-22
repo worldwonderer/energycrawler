@@ -376,6 +376,8 @@ class XhsQrAuthService:
             browser_backend=session.backend,
             browser_id=session.browser_id,
             enable_cache=True,
+            session_ttl_sec=getattr(config, "XHS_SIGNATURE_SESSION_TTL_SEC", 1800),
+            failure_warn_threshold=getattr(config, "XHS_SIGNATURE_FAILURE_THRESHOLD", 3),
         )
         signs = await adapter.sign_with_energy(
             uri=uri,

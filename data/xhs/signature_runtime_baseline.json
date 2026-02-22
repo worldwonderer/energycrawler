@@ -1,0 +1,10 @@
+{
+  "mnsv2_type": "function",
+  "mnsv2_min_source_length": 1,
+  "required_globals": [
+    "mnsv2"
+  ],
+  "required_localstorage_keys": [
+    "b1"
+  ]
+}

@@ -196,9 +196,9 @@ def energy_service() -> Generator[EnergyServiceManager, None, None]:
     runtime environment with a display. This fixture will skip tests if
     the service is not running. Start the service manually using:
 
-        cd /Users/pite/EnergyCrawler/energy-service && ./energy-service
+        python3 scripts/energycrawler_cli.py energy ensure
 
-    Or use: bash /Users/pite/EnergyCrawler/tests/e2e/start_service.sh
+    Or use: bash tests/e2e/start_service.sh
     """
     # Check if service is already running
     if _check_energy_service_available():
@@ -212,8 +212,8 @@ def energy_service() -> Generator[EnergyServiceManager, None, None]:
     pytest.skip(
         "Energy service not running. "
         "Please start it manually:\n"
-        "  cd /Users/pite/EnergyCrawler/energy-service && ./energy-service\n"
-        "Or use: bash /Users/pite/EnergyCrawler/tests/e2e/start_service.sh"
+        "  python3 scripts/energycrawler_cli.py energy ensure\n"
+        "Or use: bash tests/e2e/start_service.sh"
     )
 
 

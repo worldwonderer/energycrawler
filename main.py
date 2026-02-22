@@ -115,7 +115,7 @@ async def main() -> None:
         utils.log_event("crawler.run.init_db.complete", db=args.init_db)
         return
 
-    ensure_energy_service_or_raise()
+    ensure_energy_service_or_raise(config.PLATFORM)
     crawler = CrawlerFactory.create_crawler(platform=config.PLATFORM)
     await crawler.start()
 

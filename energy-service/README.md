@@ -136,12 +136,7 @@ response = stub.GetCookies(browser_pb2.GetCookiesRequest(
 
 ## Development Status
 
-- [x] Phase 0: Energy framework validation (energy-spike/)
-- [x] Phase 1.1: Directory structure and scaffolding
-- [ ] Phase 1.2: Protocol Buffers completion
-- [ ] Phase 1.3: Energy integration (browser lifecycle, navigation, cookies)
-- [ ] Phase 1.4: Signature execution
-- [ ] Phase 1.5: Python client integration
+This module is actively used by EnergyCrawler and maintained in this repository.
 
 ## Configuration
 
@@ -155,4 +150,3 @@ Environment variables:
 
 - [EnergyCrawler](../) - Main crawler project
 - [Energy Framework](https://github.com/energye/energy) - CEF Go bindings
-- [energy-spike](../energy-spike/) - Phase 0 validation code

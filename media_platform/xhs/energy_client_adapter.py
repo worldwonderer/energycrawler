@@ -29,12 +29,13 @@ Features:
 
 import asyncio
 import hashlib
+import importlib.util
 import json
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from threading import Lock
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import urlparse
 
 import sys
@@ -45,14 +46,46 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from energy_client.browser_interface import BrowserInterface, Cookie, EnergyBrowserBackend
 try:
     from .xhs_sign import b64_encode, encode_utf8, get_trace_id, mrc, build_sign_string
+    from .signature_state import SignatureSessionState, SignatureSessionStore
 except ImportError:
     from media_platform.xhs.xhs_sign import b64_encode, encode_utf8, get_trace_id, mrc, build_sign_string
+    try:
+        from media_platform.xhs.signature_state import SignatureSessionState, SignatureSessionStore
+    except Exception:
+        # Fallback for direct module imports in isolated tests.
+        _state_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "signature_state.py")
+        _state_spec = importlib.util.spec_from_file_location("xhs_signature_state", _state_file)
+        _state_module = importlib.util.module_from_spec(_state_spec)
+        sys.modules[_state_spec.name] = _state_module  # type: ignore[union-attr]
+        _state_spec.loader.exec_module(_state_module)  # type: ignore[union-attr]
+        SignatureSessionState = _state_module.SignatureSessionState
+        SignatureSessionStore = _state_module.SignatureSessionStore
 from tools import utils
 
 
 def _md5_hex(s: str) -> str:
     """Calculate MD5 hash value"""
     return hashlib.md5(s.encode("utf-8")).hexdigest()
+
+
+def canonical_sign_input(uri: str, data: Optional[Union[Dict, str]] = None, method: str = "POST") -> str:
+    """Build canonical input string for XHS signature."""
+    return build_sign_string(uri, data, method)
+
+
+def build_sign_digest(sign_str: str) -> str:
+    """Build MD5 digest for the canonical sign input."""
+    return _md5_hex(sign_str)
+
+
+def infer_data_type(data: Optional[Union[Dict, str]]) -> str:
+    """Infer x4 payload type for X-s wrapping payload."""
+    return "object" if isinstance(data, (dict, list)) else "string"
+
+
+def normalize_mnsv2_result(raw_result: str) -> str:
+    """Normalize `window.mnsv2(...)` return value."""
+    return raw_result.strip('"').strip("'") if raw_result else ""
 
 
 def _build_xs_payload(x3_value: str, data_type: str = "object") -> str:
@@ -206,6 +239,8 @@ class XHSEnergyAdapter:
     DEFAULT_MAX_RETRIES = 3
     DEFAULT_RETRY_DELAY_MS = 100
     DEFAULT_RETRY_BACKOFF_FACTOR = 2.0
+    DEFAULT_SESSION_TTL_SEC = 1800
+    DEFAULT_FAILURE_WARN_THRESHOLD = 3
 
     def __init__(
         self,
@@ -214,6 +249,9 @@ class XHSEnergyAdapter:
         enable_cache: bool = True,
         cache_ttl: int = 300,
         cache_max_size: int = 1000,
+        session_store: Optional[SignatureSessionStore] = None,
+        session_ttl_sec: int = DEFAULT_SESSION_TTL_SEC,
+        failure_warn_threshold: int = DEFAULT_FAILURE_WARN_THRESHOLD,
     ):
         """
         Initialize the XHS Energy adapter.
@@ -224,6 +262,9 @@ class XHSEnergyAdapter:
             enable_cache: Whether to enable signature caching
             cache_ttl: Cache TTL in seconds (default 5 minutes)
             cache_max_size: Maximum number of cached signatures
+            session_store: Optional external signature session state store
+            session_ttl_sec: Session state TTL in seconds
+            failure_warn_threshold: Warning threshold for consecutive signature failures
         """
         self.browser = browser_backend
         self.browser_id = browser_id
@@ -244,6 +285,10 @@ class XHSEnergyAdapter:
         self._max_retries = self.DEFAULT_MAX_RETRIES
         self._retry_delay_ms = self.DEFAULT_RETRY_DELAY_MS
         self._retry_backoff_factor = self.DEFAULT_RETRY_BACKOFF_FACTOR
+
+        # Session state
+        self._session_store = session_store or SignatureSessionStore(ttl_sec=session_ttl_sec)
+        self._failure_warn_threshold = max(1, int(failure_warn_threshold))
 
     def connect(self) -> None:
         """Connect to the browser backend."""
@@ -300,9 +345,18 @@ class XHSEnergyAdapter:
             **self._signature_cache.stats()
         }
 
+    def get_signature_session_state(self) -> Optional[SignatureSessionState]:
+        """Get a snapshot of the current browser signature session state."""
+        return self._session_store.snapshot(self.browser_id)
+
     # ==================== b1 Management ====================
 
     async def get_b1_from_localstorage(self, force_refresh: bool = False) -> str:
+        """Get b1 value from localStorage."""
+        b1_value, _ = await self._get_b1_with_metadata(force_refresh=force_refresh)
+        return b1_value
+
+    async def _get_b1_with_metadata(self, force_refresh: bool = False) -> Tuple[str, bool]:
         """
         Get b1 value from localStorage via JavaScript execution.
 
@@ -313,14 +367,14 @@ class XHSEnergyAdapter:
             force_refresh: Force refresh from browser even if cached
 
         Returns:
-            b1 value string, empty string if not found or error
+            Tuple of (b1 value string, refreshed flag)
         """
         current_time = time.time()
 
         # Return cached value if still valid
         if not force_refresh and self._b1_cache:
             if current_time - self._b1_cache_time < self._b1_cache_ttl:
-                return self._b1_cache
+                return self._b1_cache, False
 
         try:
             script = "JSON.stringify(window.localStorage)"
@@ -338,7 +392,7 @@ class XHSEnergyAdapter:
                 # Handle case where parsed result might not be a dict
                 if not isinstance(local_storage, dict):
                     utils.logger.warning(f"[XHSEnergyAdapter] localStorage is not a dict, got: {type(local_storage)}")
-                    return self._b1_cache or ""
+                    return self._b1_cache or "", False
 
                 # b1 is stored directly in localStorage
                 b1_value = local_storage.get("b1", "")
@@ -346,7 +400,7 @@ class XHSEnergyAdapter:
                 if b1_value:
                     self._b1_cache = b1_value
                     self._b1_cache_time = current_time
-                    return b1_value
+                    return b1_value, True
 
                 utils.logger.debug(f"[XHSEnergyAdapter] b1 not found in localStorage, keys: {list(local_storage.keys())[:10]}")
         except Exception as e:
@@ -355,7 +409,7 @@ class XHSEnergyAdapter:
             utils.logger.debug(f"[XHSEnergyAdapter] Traceback: {traceback.format_exc()}")
 
         # Return cached value even if expired, better than nothing
-        return self._b1_cache or ""
+        return self._b1_cache or "", False
 
     # ==================== JavaScript Execution ====================
 
@@ -381,6 +435,17 @@ class XHSEnergyAdapter:
             result = self.browser.execute_js(self.browser_id, script)
             return result if isinstance(result, str) else str(result) if result else ""
 
+    @staticmethod
+    def _escape_js_arg(value: str) -> str:
+        """Escape a value for a single-quoted JavaScript literal."""
+        return value.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
+
+    def _build_mnsv2_script(self, sign_str: str, md5_str: str) -> str:
+        """Build executable JavaScript for mnsv2."""
+        sign_str_escaped = self._escape_js_arg(sign_str)
+        md5_str_escaped = self._escape_js_arg(md5_str)
+        return f"window.mnsv2('{sign_str_escaped}', '{md5_str_escaped}')"
+
     # ==================== Signature Execution ====================
 
     async def execute_signature(
@@ -402,6 +467,7 @@ class XHSEnergyAdapter:
         Returns:
             Signature string returned by the browser
         """
+        started_at = time.time()
         # Check cache first
         if use_cache and self._signature_cache:
             cached = self._signature_cache.get(sign_str, md5_str)
@@ -409,11 +475,7 @@ class XHSEnergyAdapter:
                 utils.logger.debug(f"[XHSEnergyAdapter] Cache hit for signature")
                 return cached
 
-        # Escape the strings for JavaScript
-        sign_str_escaped = sign_str.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
-        md5_str_escaped = md5_str.replace("\\", "\\\\").replace("'", "\\'")
-
-        script = f"window.mnsv2('{sign_str_escaped}', '{md5_str_escaped}')"
+        script = self._build_mnsv2_script(sign_str, md5_str)
 
         # Retry loop with exponential backoff
         last_error: Optional[Exception] = None
@@ -424,14 +486,19 @@ class XHSEnergyAdapter:
                 result = self._execute_js_raw(script)
 
                 if result:
-                    # Remove surrounding quotes from the result (mnsv2 returns quoted string)
-                    result = result.strip('"').strip("'")
+                    result = normalize_mnsv2_result(result)
                     # Cache successful result
                     if use_cache and self._signature_cache:
                         self._signature_cache.set(sign_str, md5_str, result)
                     return result
 
                 last_error = Exception("mnsv2 returned empty result")
+                utils.log_event(
+                    "xhs.signature.empty_result",
+                    level="warning",
+                    browser_id=self.browser_id,
+                    attempt=attempt + 1,
+                )
 
             except Exception as e:
                 last_error = e
@@ -446,6 +513,14 @@ class XHSEnergyAdapter:
 
         utils.logger.error(
             f"[XHSEnergyAdapter] All {self._max_retries} signature attempts failed"
+        )
+        utils.log_event(
+            "xhs.signature.execute.failed",
+            level="error",
+            browser_id=self.browser_id,
+            attempts=self._max_retries,
+            elapsed_ms=int((time.time() - started_at) * 1000),
+            error=str(last_error) if last_error else "",
         )
         # Return empty string on failure (consistent with original behavior)
         return ""
@@ -486,10 +561,10 @@ class XHSEnergyAdapter:
         Returns:
             x-s signature string
         """
-        sign_str = build_sign_string(uri, data, method)
-        md5_str = _md5_hex(sign_str)
+        sign_str = canonical_sign_input(uri, data, method)
+        md5_str = build_sign_digest(sign_str)
         x3_value = await self.execute_signature(sign_str, md5_str)
-        data_type = "object" if isinstance(data, (dict, list)) else "string"
+        data_type = infer_data_type(data)
         return _build_xs_payload(x3_value, data_type)
 
     async def sign_with_energy(
@@ -511,9 +586,44 @@ class XHSEnergyAdapter:
         Returns:
             Dictionary containing x-s, x-t, x-s-common, x-b3-traceid
         """
-        b1 = await self.get_b1_from_localstorage()
-        x_s = await self.sign_xs_with_energy(uri, data, method)
-        x_t = str(int(time.time() * 1000))
+        self._session_store.begin_request(self.browser_id)
+        sign_str = canonical_sign_input(uri, data, method)
+        md5_str = build_sign_digest(sign_str)
+
+        b1, b1_refreshed = await self._get_b1_with_metadata()
+        if b1_refreshed:
+            self._session_store.mark_b1_refreshed(self.browser_id)
+
+        x3_value = await self.execute_signature(sign_str, md5_str)
+        x_s = _build_xs_payload(x3_value, infer_data_type(data))
+
+        x_t_value = self._session_store.next_monotonic_x_t(
+            self.browser_id,
+            int(time.time() * 1000),
+        )
+        x_t = str(x_t_value)
+
+        if x3_value:
+            updated_state = self._session_store.record_success(self.browser_id)
+            utils.log_event(
+                "xhs.signature.success",
+                browser_id=self.browser_id,
+                request_seq=updated_state.request_seq,
+                uri=uri,
+                method=method.upper(),
+            )
+        else:
+            updated_state = self._session_store.record_failure(self.browser_id)
+            level = "warning" if updated_state.consecutive_failures < self._failure_warn_threshold else "error"
+            utils.log_event(
+                "xhs.signature.failure",
+                level=level,
+                browser_id=self.browser_id,
+                request_seq=updated_state.request_seq,
+                failure_count=updated_state.consecutive_failures,
+                uri=uri,
+                method=method.upper(),
+            )
 
         return {
             "x-s": x_s,
@@ -614,6 +724,8 @@ def create_xhs_energy_adapter(
     enable_cache: bool = True,
     cache_ttl: int = 300,
     cache_max_size: int = 1000,
+    session_ttl_sec: int = XHSEnergyAdapter.DEFAULT_SESSION_TTL_SEC,
+    failure_warn_threshold: int = XHSEnergyAdapter.DEFAULT_FAILURE_WARN_THRESHOLD,
 ) -> XHSEnergyAdapter:
     """
     Factory function to create an XHS Energy adapter.
@@ -629,6 +741,8 @@ def create_xhs_energy_adapter(
         enable_cache: Whether to enable signature caching
         cache_ttl: Cache TTL in seconds
         cache_max_size: Maximum cache entries
+        session_ttl_sec: Signature session TTL in seconds
+        failure_warn_threshold: Warning threshold for consecutive signature failures
 
     Returns:
         Configured XHSEnergyAdapter instance
@@ -639,7 +753,9 @@ def create_xhs_energy_adapter(
         browser_id,
         enable_cache=enable_cache,
         cache_ttl=cache_ttl,
-        cache_max_size=cache_max_size
+        cache_max_size=cache_max_size,
+        session_ttl_sec=session_ttl_sec,
+        failure_warn_threshold=failure_warn_threshold,
     )
 
     # Connect and create browser
