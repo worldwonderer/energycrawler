@@ -32,15 +32,22 @@ uv run energycrawler energy ensure
 ### 4. setup / config show / doctor（先做环境可用性确认）
 
 ```bash
-# setup（一键向导；当前命令名为 init）
-uv run energycrawler init --template .env.quickstart.example --check
+# setup（一键向导）
+uv run energycrawler setup
 
-# config show（当前通过 API 查看）
-curl -s http://localhost:8080/api/config/platforms | jq .
-curl -s http://localhost:8080/api/config/options | jq .
+# config show（核心配置）
+uv run energycrawler config show --simple
 
 # doctor（全量体检）
 uv run energycrawler doctor
+```
+
+### 4.1 极简 3 步（推荐）
+
+```bash
+uv run energycrawler setup
+uv run energycrawler run --platform xhs --keywords 新能源
+uv run energycrawler data latest --download
 ```
 
 ### 5. 运行爬虫
@@ -48,6 +55,9 @@ uv run energycrawler doctor
 ```bash
 # xhs 关键词搜索
 uv run energycrawler crawl -- --platform xhs --lt cookie --type search --keywords 编程副业,独立开发
+
+# 简化模式（推荐）
+uv run energycrawler run --platform xhs --keywords 编程副业,独立开发
 
 # x 指定推文详情
 uv run energycrawler crawl -- --platform x --lt cookie --type detail --specified_id 1890000000000000000

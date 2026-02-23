@@ -61,6 +61,10 @@ def test_parser_includes_setup_config_show_and_precheck():
     assert precheck_args.command == "precheck"
     assert precheck_args.handler is cli._doctor_cmd
 
+    run_args = parser.parse_args(["run", "--platform", "xhs", "--keywords", "新能源"])
+    assert run_args.command == "run"
+    assert run_args.handler is cli._run_simple_cmd
+
 
 def test_collect_runtime_config_masks_sensitive_values(monkeypatch):
     fake_config = SimpleNamespace(
@@ -97,9 +101,9 @@ def test_config_show_outputs_json(monkeypatch, capsys):
     monkeypatch.setattr(
         cli,
         "_collect_runtime_config",
-        lambda show_secrets: {"PLATFORM": "xhs", "COOKIES": "***"},
+        lambda **_: {"PLATFORM": "xhs", "COOKIES": "***"},
     )
-    args = argparse.Namespace(show_secrets=False, json=True)
+    args = argparse.Namespace(show_secrets=False, simple=False, json=True)
 
     code = cli._config_show_cmd(args)
 
@@ -107,6 +111,22 @@ def test_config_show_outputs_json(monkeypatch, capsys):
     output = json.loads(capsys.readouterr().out)
     assert output["runtime_config"]["PLATFORM"] == "xhs"
     assert output["runtime_config"]["COOKIES"] == "***"
+
+
+def test_config_show_simple_outputs_core_keys(monkeypatch, capsys):
+    monkeypatch.setattr(
+        cli,
+        "_collect_runtime_config",
+        lambda **kwargs: {"PLATFORM": "xhs", "ENERGY_SERVICE_ADDRESS": "localhost:50051"},
+    )
+    args = argparse.Namespace(show_secrets=False, simple=True, json=False)
+
+    code = cli._config_show_cmd(args)
+
+    assert code == 0
+    output = capsys.readouterr().out
+    assert "PLATFORM=xhs" in output
+    assert "ENERGY_SERVICE_ADDRESS=localhost:50051" in output
 
 
 def test_doctor_keeps_failure_code_when_cleanup_passes(monkeypatch, capsys):
@@ -168,3 +188,64 @@ def test_setup_minimal_json_flow(monkeypatch, capsys):
     assert "energy_ensure" in step_names
     assert "doctor_precheck" in step_names
     assert "login_readiness" in step_names
+
+
+def test_run_simple_builds_balanced_defaults():
+    args = argparse.Namespace(
+        platform="xhs",
+        crawler_type="search",
+        keywords="新能源",
+        specified_id="",
+        creator_id="",
+        safety_profile="balanced",
+        save_option="json",
+        headless=False,
+        dry_run=False,
+        extra=[],
+    )
+
+    forwarded = cli._build_simple_run_args(args)
+    assert "--platform" in forwarded and "xhs" in forwarded
+    assert "--type" in forwarded and "search" in forwarded
+    assert "--keywords" in forwarded and "新能源" in forwarded
+    assert "--max_notes_count" in forwarded and "10" in forwarded
+    assert "--crawl_sleep_sec" in forwarded and "8.0" in forwarded
+
+
+def test_run_simple_keeps_explicit_advanced_limits():
+    args = argparse.Namespace(
+        platform="x",
+        crawler_type="search",
+        keywords="open source",
+        specified_id="",
+        creator_id="",
+        safety_profile="safe",
+        save_option="json",
+        headless=True,
+        dry_run=False,
+        extra=["--", "--max_notes_count", "3", "--crawl_sleep_sec", "12"],
+    )
+
+    forwarded = cli._build_simple_run_args(args)
+    assert "--max_notes_count" in forwarded and "3" in forwarded
+    assert "--crawl_sleep_sec" in forwarded and "12" in forwarded
+
+
+def test_run_simple_requires_keywords_for_search(capsys):
+    args = argparse.Namespace(
+        platform="xhs",
+        crawler_type="search",
+        keywords="",
+        specified_id="",
+        creator_id="",
+        safety_profile="balanced",
+        save_option="json",
+        headless=False,
+        dry_run=False,
+        extra=[],
+    )
+
+    code = cli._run_simple_cmd(args)
+
+    assert code == 2
+    assert "requires --keywords" in capsys.readouterr().err

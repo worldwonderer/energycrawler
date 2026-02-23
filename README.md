@@ -211,7 +211,22 @@ uv run energycrawler auth xhs-qr-login --api-base http://localhost:8080
 
 当 `XHS_SIGNATURE_CANARY_ENABLED=true` 时，API 入队 preflight 与 CLI 启动前检查都会执行签名 runtime canary。
 
-### 4. setup / config show / doctor（建议先执行）
+### 4. 极简模式（推荐）
+
+如果你不想记一堆参数，直接按 3 步走：
+
+```bash
+# 1) 初始化与体检
+uv run energycrawler setup
+
+# 2) 用简化命令抓取（默认 balanced 安全档）
+uv run energycrawler run --platform xhs --keywords 新能源
+
+# 3) 取最新结果
+uv run energycrawler data latest --download
+```
+
+### 5. setup / config show / doctor（建议先执行）
 
 一键初始化（setup 向导，当前命令名为 `init`）：
 
@@ -223,11 +238,14 @@ uv run energycrawler init --template .env.quickstart.example --check
 uv run energycrawler init --force --check
 ```
 
-查看当前可选配置（当前版本暂未提供 `energycrawler config show` 子命令，可通过 API 查看）：
+查看当前运行配置（支持简化视图）：
 
 ```bash
-curl -s http://localhost:8080/api/config/platforms | jq .
-curl -s http://localhost:8080/api/config/options | jq .
+# 核心配置（推荐）
+uv run energycrawler config show --simple
+
+# 完整配置
+uv run energycrawler config show --json
 ```
 
 环境体检（doctor）：
@@ -246,7 +264,14 @@ uv run energycrawler doctor --skip-login-check --json
 - `doctor` 报 Energy 健康检查失败：先执行 `uv run energycrawler energy ensure`
 - `doctor` 报登录态失败：先执行 `uv run energycrawler auth status --json`，确认 Cookie/Token 有效
 
-### 5. 运行 CLI
+### 6. 运行 CLI（进阶）
+
+推荐先用简化命令：
+
+```bash
+uv run energycrawler run --platform xhs --keywords 编程副业,独立开发
+uv run energycrawler run --platform x --keywords "open source" --safety-profile safe
+```
 
 小红书关键词抓取：
 
@@ -368,9 +393,13 @@ uv run uvicorn api.main:app --port 8080 --reload
 
 ### API 操作食谱（可直接复制）
 
-查看 config（等价 `config show`）：
+查看 config：
 
 ```bash
+# CLI 核心配置视图（推荐）
+uv run energycrawler config show --simple
+
+# API 配置选项
 curl -s http://localhost:8080/api/config/platforms | jq .
 curl -s http://localhost:8080/api/config/options | jq .
 ```

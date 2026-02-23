@@ -31,6 +31,12 @@ DEFAULT_ENSURE_SLEEP = 2.0
 DEFAULT_API_BASE = os.getenv("ENERGYCRAWLER_API_BASE", "http://127.0.0.1:8080")
 DEFAULT_API_TIMEOUT = 15.0
 
+SIMPLE_SAFETY_DEFAULTS: dict[str, dict[str, float | int]] = {
+    "safe": {"max_notes_count": 5, "crawl_sleep_sec": 10.0},
+    "balanced": {"max_notes_count": 10, "crawl_sleep_sec": 8.0},
+    "aggressive": {"max_notes_count": 20, "crawl_sleep_sec": 6.0},
+}
+
 RUNTIME_CONFIG_KEYS = [
     "PLATFORM",
     "CRAWLER_TYPE",
@@ -48,6 +54,16 @@ RUNTIME_CONFIG_KEYS = [
     "TWITTER_COOKIE",
     "TWITTER_AUTH_TOKEN",
     "TWITTER_CT0",
+]
+CORE_RUNTIME_CONFIG_KEYS = [
+    "PLATFORM",
+    "CRAWLER_TYPE",
+    "LOGIN_TYPE",
+    "KEYWORDS",
+    "SAVE_DATA_OPTION",
+    "SAVE_DATA_PATH",
+    "ENABLE_ENERGY_BROWSER",
+    "ENERGY_SERVICE_ADDRESS",
 ]
 SENSITIVE_RUNTIME_KEYS = {"COOKIES", "TWITTER_COOKIE", "TWITTER_AUTH_TOKEN", "TWITTER_CT0"}
 
@@ -109,6 +125,99 @@ def _auth_cmd(args: argparse.Namespace) -> int:
 
 def _energy_cmd(args: argparse.Namespace) -> int:
     return _run_local_script("energy_service_cli.py", _normalize_passthrough_args(args.args))
+
+
+def _contains_flag(args: Sequence[str], flag: str) -> bool:
+    prefix = f"{flag}="
+    return any(item == flag or item.startswith(prefix) for item in args)
+
+
+def _require_non_empty(value: str, message: str) -> str:
+    cleaned = (value or "").strip()
+    if not cleaned:
+        raise ValueError(message)
+    return cleaned
+
+
+def _build_simple_run_args(args: argparse.Namespace) -> list[str]:
+    crawler_type = str(args.crawler_type).strip().lower()
+    if crawler_type not in {"search", "detail", "creator"}:
+        raise ValueError(f"Unsupported crawler type: {crawler_type}")
+
+    platform = str(args.platform).strip().lower()
+    if platform not in {"xhs", "x"}:
+        raise ValueError(f"Unsupported platform: {platform}")
+
+    run_args = [
+        "--platform",
+        platform,
+        "--lt",
+        "cookie",
+        "--type",
+        crawler_type,
+        "--save_data_option",
+        str(args.save_option).strip().lower(),
+        "--headless",
+        "true" if bool(args.headless) else "false",
+    ]
+
+    if crawler_type == "search":
+        run_args.extend(
+            [
+                "--keywords",
+                _require_non_empty(args.keywords, "run mode=search requires --keywords"),
+            ]
+        )
+    elif crawler_type == "detail":
+        run_args.extend(
+            [
+                "--specified_id",
+                _require_non_empty(args.specified_id, "run mode=detail requires --specified-id"),
+            ]
+        )
+    else:
+        run_args.extend(
+            [
+                "--creator_id",
+                _require_non_empty(args.creator_id, "run mode=creator requires --creator-id"),
+            ]
+        )
+
+    extra = _normalize_passthrough_args(args.extra)
+    safety_profile = str(args.safety_profile).strip().lower()
+    defaults = SIMPLE_SAFETY_DEFAULTS.get(safety_profile)
+    if defaults is None:
+        raise ValueError(
+            f"Unsupported safety profile: {safety_profile} "
+            f"(expected one of {', '.join(sorted(SIMPLE_SAFETY_DEFAULTS))})"
+        )
+
+    if not _contains_flag(extra, "--max_notes_count"):
+        run_args.extend(["--max_notes_count", str(int(defaults["max_notes_count"]))])
+    if not _contains_flag(extra, "--crawl_sleep_sec"):
+        run_args.extend(["--crawl_sleep_sec", str(float(defaults["crawl_sleep_sec"]))])
+
+    run_args.extend(extra)
+    return run_args
+
+
+def _run_simple_cmd(args: argparse.Namespace) -> int:
+    try:
+        forwarded = _build_simple_run_args(args)
+    except ValueError as exc:
+        print(f"[run] {exc}", file=sys.stderr)
+        return 2
+
+    if args.dry_run:
+        print("uv run python main.py " + " ".join(forwarded))
+        return 0
+
+    print(
+        "[run] profile="
+        f"{args.safety_profile} platform={args.platform} type={args.crawler_type} "
+        "-> forwarding to main.py"
+    )
+    return _run_python_entry(PROJECT_ROOT / "main.py", forwarded)
 
 
 def _run_cleanup_report(*, json_output: bool, fail_on_findings: bool) -> int:
@@ -736,10 +845,11 @@ def _mask_secret(value: str) -> str:
     return f"{raw[:4]}...{raw[-4:]} ({len(raw)} chars)"
 
 
-def _collect_runtime_config(*, show_secrets: bool) -> dict[str, Any]:
+def _collect_runtime_config(*, show_secrets: bool, simple: bool = False) -> dict[str, Any]:
     base_config = _load_base_config_module()
     payload: dict[str, Any] = {}
-    for key in RUNTIME_CONFIG_KEYS:
+    keys = CORE_RUNTIME_CONFIG_KEYS if simple else RUNTIME_CONFIG_KEYS
+    for key in keys:
         if hasattr(base_config, key):
             payload[key] = getattr(base_config, key)
 
@@ -758,7 +868,7 @@ def _collect_runtime_config(*, show_secrets: bool) -> dict[str, Any]:
 def _config_show_cmd(args: argparse.Namespace) -> int:
     payload = {
         "project_root": str(PROJECT_ROOT),
-        "runtime_config": _collect_runtime_config(show_secrets=args.show_secrets),
+        "runtime_config": _collect_runtime_config(show_secrets=args.show_secrets, simple=args.simple),
     }
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
@@ -910,9 +1020,10 @@ def _build_parser() -> argparse.ArgumentParser:
         description="EnergyCrawler unified CLI",
         epilog=(
             "Examples:\n"
-            "  uv run energycrawler init\n"
-            "  uv run energycrawler setup --storage-check\n"
-            "  uv run energycrawler config show --json\n"
+            "  uv run energycrawler setup\n"
+            "  uv run energycrawler run --platform xhs --keywords 新能源\n"
+            "  uv run energycrawler data latest --download\n"
+            "  uv run energycrawler config show --simple\n"
             "  uv run energycrawler data latest --platform xhs\n"
             "  uv run energycrawler data latest --download --platform x --output ./latest.json\n"
             "  uv run energycrawler energy ensure\n"
@@ -931,6 +1042,40 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Arguments forwarded to main.py",
     )
     crawl_parser.set_defaults(handler=_crawl_cmd)
+
+    run_parser = subparsers.add_parser("run", help="Simple crawl mode (recommended)")
+    run_parser.add_argument("--platform", choices=["xhs", "x"], default="xhs")
+    run_parser.add_argument(
+        "--type",
+        dest="crawler_type",
+        choices=["search", "detail", "creator"],
+        default="search",
+    )
+    run_parser.add_argument("--keywords", default="")
+    run_parser.add_argument("--specified-id", default="")
+    run_parser.add_argument("--creator-id", default="")
+    run_parser.add_argument(
+        "--safety-profile",
+        choices=sorted(SIMPLE_SAFETY_DEFAULTS.keys()),
+        default="balanced",
+    )
+    run_parser.add_argument(
+        "--save-option",
+        choices=["json", "csv", "excel", "sqlite", "db", "mongodb", "postgres"],
+        default="json",
+    )
+    run_parser.add_argument(
+        "--headless",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    run_parser.add_argument("--dry-run", action="store_true")
+    run_parser.add_argument(
+        "extra",
+        nargs=argparse.REMAINDER,
+        help="Advanced args forwarded to main.py (put them after --)",
+    )
+    run_parser.set_defaults(handler=_run_simple_cmd)
 
     auth_parser = subparsers.add_parser("auth", help="Run auth helper CLI")
     auth_parser.add_argument(
@@ -1022,6 +1167,7 @@ def _build_parser() -> argparse.ArgumentParser:
     config_subparsers = config_parser.add_subparsers(dest="config_command", required=True)
     config_show_parser = config_subparsers.add_parser("show", help="Show runtime config")
     config_show_parser.add_argument("--show-secrets", action="store_true")
+    config_show_parser.add_argument("--simple", action="store_true", help="Show only core runtime config")
     config_show_parser.add_argument("--json", action="store_true")
     config_show_parser.set_defaults(handler=_config_show_cmd)
 
