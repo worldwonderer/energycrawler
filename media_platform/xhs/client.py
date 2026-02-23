@@ -583,6 +583,9 @@ class XiaoHongShuClient(AbstractApiClient):
         callback: Optional[Callable] = None,
         xsec_token: str = "",
         xsec_source: str = "pc_feed",
+        start_cursor: str = "",
+        stop_note_id: str = "",
+        progress_callback: Optional[Callable[[str], Any]] = None,
     ) -> List[Dict]:
         """
         Get all posts published by specified user, this method will continuously find all post information under a user
@@ -598,7 +601,7 @@ class XiaoHongShuClient(AbstractApiClient):
         """
         result = []
         notes_has_more = True
-        notes_cursor = ""
+        notes_cursor = start_cursor or ""
         while notes_has_more and len(result) < config.CRAWLER_MAX_NOTES_COUNT:
             notes_res = await self.get_notes_by_creator(
                 user_id, notes_cursor, xsec_token=xsec_token, xsec_source=xsec_source
@@ -622,6 +625,16 @@ class XiaoHongShuClient(AbstractApiClient):
                 f"[XiaoHongShuClient.get_all_notes_by_creator] got user_id:{user_id} notes len : {len(notes)}"
             )
 
+            marker_found = False
+            if stop_note_id:
+                filtered_notes: List[Dict] = []
+                for note in notes:
+                    if str(note.get("note_id", "")).strip() == stop_note_id:
+                        marker_found = True
+                        break
+                    filtered_notes.append(note)
+                notes = filtered_notes
+
             remaining = config.CRAWLER_MAX_NOTES_COUNT - len(result)
             if remaining <= 0:
                 break
@@ -631,6 +644,17 @@ class XiaoHongShuClient(AbstractApiClient):
                 await callback(notes_to_add)
 
             result.extend(notes_to_add)
+
+            if progress_callback:
+                progress_ret = progress_callback(notes_cursor or "")
+                if hasattr(progress_ret, "__await__"):
+                    await progress_ret
+
+            if marker_found:
+                utils.logger.info(
+                    f"[XiaoHongShuClient.get_all_notes_by_creator] Reached incremental marker for user {user_id}"
+                )
+                break
             await asyncio.sleep(crawl_interval)
 
         utils.logger.info(

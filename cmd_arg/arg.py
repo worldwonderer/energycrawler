@@ -276,6 +276,32 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
                 rich_help_panel="Performance Configuration",
             ),
         ] = float(config.CRAWLER_MAX_SLEEP_SEC),
+        incremental: Annotated[
+            str,
+            typer.Option(
+                "--incremental",
+                help="Enable incremental crawl (new content only), supports yes/true/t/y/1 or no/false/f/n/0",
+                rich_help_panel="Performance Configuration",
+                show_default=True,
+            ),
+        ] = str(config.ENABLE_INCREMENTAL_CRAWL),
+        resume_checkpoint: Annotated[
+            str,
+            typer.Option(
+                "--resume_checkpoint",
+                help="Resume from checkpoint after interruption, supports yes/true/t/y/1 or no/false/f/n/0",
+                rich_help_panel="Performance Configuration",
+                show_default=True,
+            ),
+        ] = str(config.RESUME_FROM_CHECKPOINT),
+        checkpoint_path: Annotated[
+            str,
+            typer.Option(
+                "--checkpoint_path",
+                help="Custom checkpoint file path (optional)",
+                rich_help_panel="Performance Configuration",
+            ),
+        ] = config.CRAWLER_CHECKPOINT_PATH,
         save_data_path: Annotated[
             str,
             typer.Option(
@@ -290,6 +316,8 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
         enable_comment = _to_bool(get_comment)
         enable_sub_comment = _to_bool(get_sub_comment)
         enable_headless = _to_bool(headless)
+        enable_incremental = _to_bool(incremental)
+        enable_resume_checkpoint = _to_bool(resume_checkpoint)
         init_db_value = init_db.value if init_db else None
 
         # Parse specified_id and creator_id into lists
@@ -312,6 +340,9 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
         config.MAX_CONCURRENCY_NUM = max_concurrency_num
         config.CRAWLER_MAX_NOTES_COUNT = max_notes_count
         config.CRAWLER_MAX_SLEEP_SEC = crawl_sleep_sec
+        config.ENABLE_INCREMENTAL_CRAWL = enable_incremental
+        config.RESUME_FROM_CHECKPOINT = enable_resume_checkpoint
+        config.CRAWLER_CHECKPOINT_PATH = checkpoint_path.strip()
         config.SAVE_DATA_PATH = save_data_path
         config.ENERGY_BROWSER_ID = config.resolve_energy_browser_id(config.PLATFORM)
 

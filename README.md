@@ -220,6 +220,16 @@ X 创作者抓取：
 uv run energycrawler crawl -- --platform x --lt cookie --type creator --creator_id "elonmusk"
 ```
 
+增量抓取 / 断点续爬（支持按 checkpoint 抓新增内容）：
+
+```bash
+# 开启增量 + 断点续爬（默认 checkpoint: data/checkpoints/crawl_state.json）
+uv run energycrawler crawl -- --platform xhs --lt cookie --type creator --creator_id "<creator_url>" --incremental true --resume_checkpoint true
+
+# 指定 checkpoint 文件
+uv run energycrawler crawl -- --platform x --lt cookie --type creator --creator_id "elonmusk" --incremental true --checkpoint_path "/tmp/energycrawler_checkpoints/state.json"
+```
+
 查看参数：
 
 ```bash

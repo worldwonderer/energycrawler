@@ -33,6 +33,7 @@ import config
 from base.base_crawler import AbstractCrawler
 from model.m_xiaohongshu import NoteUrlInfo, CreatorUrlInfo
 from store import xhs as xhs_store
+from tools.crawl_checkpoint import CrawlCheckpointManager
 from tools import utils
 from tools.safety import safe_sleep
 from var import crawler_type_var, source_keyword_var
@@ -70,6 +71,38 @@ class XiaoHongShuCrawler(AbstractCrawler):
         self.user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36"
         self.energy_adapter = None
         self._cookie_header = getattr(config, "COOKIES", "")
+        self._checkpoint = CrawlCheckpointManager()
+
+    @staticmethod
+    def _incremental_enabled() -> bool:
+        return bool(getattr(config, "ENABLE_INCREMENTAL_CRAWL", False))
+
+    @staticmethod
+    def _resume_checkpoint_enabled() -> bool:
+        return bool(getattr(config, "RESUME_FROM_CHECKPOINT", True))
+
+    @staticmethod
+    def _scope_key_search(keyword: str) -> str:
+        return f"xhs:search:{keyword}"
+
+    @staticmethod
+    def _scope_key_creator(user_id: str) -> str:
+        return f"xhs:creator:{user_id}"
+
+    @staticmethod
+    def _split_new_notes_before_marker(notes: List[Dict], known_latest_note_id: str) -> tuple[List[Dict], bool]:
+        if not known_latest_note_id:
+            return notes, False
+
+        marker_found = False
+        new_notes: List[Dict] = []
+        for note in notes:
+            note_id = str(note.get("id") or note.get("note_id") or "").strip()
+            if note_id and note_id == known_latest_note_id:
+                marker_found = True
+                break
+            new_notes.append(note)
+        return new_notes, marker_found
 
     async def start(self) -> None:
         """启动爬虫"""
@@ -177,21 +210,38 @@ class XiaoHongShuCrawler(AbstractCrawler):
         """搜索笔记并获取评论"""
         utils.logger.info("[XiaoHongShuCrawler.search] Begin search XHS keywords")
         target_note_count = max(1, int(config.CRAWLER_MAX_NOTES_COUNT))
-        start_page = config.START_PAGE
+        start_page = max(1, int(config.START_PAGE))
 
         for keyword in config.KEYWORDS.split(","):
             source_keyword_var.set(keyword)
             utils.logger.info(f"[XiaoHongShuCrawler.search] Current search keyword: {keyword}")
-            page = 1
+            scope_key = self._scope_key_search(keyword)
+            known_latest_note_id = ""
+            newest_note_id_this_run = ""
+            page = start_page
+            if self._incremental_enabled():
+                scope_state = self._checkpoint.get_scope(scope_key)
+                known_latest_note_id = str(scope_state.get("latest_item_id", "")).strip()
+                if self._resume_checkpoint_enabled() and scope_state.get("in_progress"):
+                    resume_page = int(scope_state.get("next_page", page) or page)
+                    page = max(page, resume_page)
+                self._checkpoint.mark_scope_started(
+                    scope_key,
+                    platform="xhs",
+                    crawler_type="search",
+                    next_page=page,
+                    meta={"keyword": keyword},
+                )
+                if known_latest_note_id:
+                    utils.logger.info(
+                        f"[XiaoHongShuCrawler.search] Incremental marker for '{keyword}': {known_latest_note_id}"
+                    )
+
             search_id = get_search_id()
             fetched_note_count = 0
+            interrupted_by_error = False
 
             while fetched_note_count < target_note_count:
-                if page < start_page:
-                    utils.logger.info(f"[XiaoHongShuCrawler.search] Skip page {page}")
-                    page += 1
-                    continue
-
                 try:
                     utils.logger.info(f"[XiaoHongShuCrawler.search] Search keyword: {keyword}, page: {page}")
                     note_ids: List[str] = []
@@ -212,14 +262,26 @@ class XiaoHongShuCrawler(AbstractCrawler):
                     valid_items = [item for item in raw_items if item.get("model_type") not in ("rec_query", "hot_query")]
                     remaining = target_note_count - fetched_note_count
                     selected_items = valid_items[:remaining]
+                    marker_found = False
+                    if known_latest_note_id:
+                        selected_items, marker_found = self._split_new_notes_before_marker(
+                            selected_items,
+                            known_latest_note_id,
+                        )
                     utils.logger.info(
                         f"[XiaoHongShuCrawler.search] Search notes count: {len(raw_items)}, "
                         f"selected: {len(selected_items)}, fetched/target: {fetched_note_count}/{target_note_count}"
                     )
                     if not selected_items:
                         utils.logger.info("[XiaoHongShuCrawler.search] No valid notes in current page")
-                        if not notes_res.get("has_more", False):
+                        if marker_found or not notes_res.get("has_more", False):
                             break
+                        if self._incremental_enabled():
+                            self._checkpoint.mark_scope_progress(
+                                scope_key,
+                                next_page=page + 1,
+                                latest_item_id=newest_note_id_this_run or known_latest_note_id,
+                            )
                         page += 1
                         continue
 
@@ -240,17 +302,45 @@ class XiaoHongShuCrawler(AbstractCrawler):
                             await self.get_notice_media(note_detail)
                             note_ids.append(note_detail.get("note_id"))
                             xsec_tokens.append(note_detail.get("xsec_token"))
+                    if note_ids and not newest_note_id_this_run:
+                        newest_note_id_this_run = str(note_ids[0] or "").strip()
                     fetched_note_count += len(note_ids)
+
+                    if self._incremental_enabled():
+                        self._checkpoint.mark_scope_progress(
+                            scope_key,
+                            next_page=page + 1,
+                            latest_item_id=newest_note_id_this_run or known_latest_note_id,
+                        )
 
                     page += 1
                     await self.batch_get_note_comments(note_ids, xsec_tokens)
+                    if marker_found:
+                        utils.logger.info(
+                            f"[XiaoHongShuCrawler.search] Reached incremental marker for '{keyword}', stop pagination"
+                        )
+                        break
                     if fetched_note_count >= target_note_count or not notes_res.get("has_more", False):
                         break
                     await safe_sleep()
 
                 except DataFetchError:
                     utils.logger.error("[XiaoHongShuCrawler.search] Get note detail error")
+                    interrupted_by_error = True
                     break
+
+            if self._incremental_enabled():
+                if interrupted_by_error:
+                    self._checkpoint.mark_scope_progress(
+                        scope_key,
+                        next_page=page,
+                        latest_item_id=newest_note_id_this_run or known_latest_note_id,
+                    )
+                else:
+                    self._checkpoint.mark_scope_completed(
+                        scope_key,
+                        latest_item_id=newest_note_id_this_run or known_latest_note_id,
+                    )
 
     async def get_specified_notes(self) -> None:
         """获取指定笔记"""
@@ -305,17 +395,76 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 continue
 
             crawl_interval = config.CRAWLER_MAX_SLEEP_SEC
-            all_notes_list = await self.xhs_client.get_all_notes_by_creator(
-                user_id=user_id,
-                crawl_interval=crawl_interval,
-                callback=self.fetch_creator_notes_detail,
-                xsec_token=creator_info.xsec_token,
-                xsec_source=creator_info.xsec_source,
-            )
+            scope_key = self._scope_key_creator(user_id)
+            known_latest_note_id = ""
+            start_cursor = ""
+            newest_note_id_this_run = ""
+            if self._incremental_enabled():
+                scope_state = self._checkpoint.get_scope(scope_key)
+                known_latest_note_id = str(scope_state.get("latest_item_id", "")).strip()
+                if self._resume_checkpoint_enabled() and scope_state.get("in_progress"):
+                    start_cursor = str(scope_state.get("cursor", "")).strip()
+                self._checkpoint.mark_scope_started(
+                    scope_key,
+                    platform="xhs",
+                    crawler_type="creator",
+                    cursor=start_cursor,
+                    meta={"user_id": user_id},
+                )
+                if known_latest_note_id:
+                    utils.logger.info(
+                        f"[XiaoHongShuCrawler.get_creators_and_notes] Incremental marker for {user_id}: "
+                        f"{known_latest_note_id}"
+                    )
+
+            async def _creator_note_callback(note_list: List[Dict]):
+                nonlocal newest_note_id_this_run
+                if note_list and not newest_note_id_this_run:
+                    newest_note_id_this_run = str(note_list[0].get("note_id", "")).strip()
+                return await self.fetch_creator_notes_detail(note_list)
+
+            async def _creator_progress_callback(cursor_value: str):
+                if not self._incremental_enabled():
+                    return
+                self._checkpoint.mark_scope_progress(
+                    scope_key,
+                    cursor=cursor_value or "",
+                    latest_item_id=newest_note_id_this_run or known_latest_note_id,
+                )
+
+            interrupted_by_error = False
+            all_notes_list: List[Dict] = []
+            try:
+                all_notes_list = await self.xhs_client.get_all_notes_by_creator(
+                    user_id=user_id,
+                    crawl_interval=crawl_interval,
+                    callback=_creator_note_callback,
+                    xsec_token=creator_info.xsec_token,
+                    xsec_source=creator_info.xsec_source,
+                    start_cursor=start_cursor,
+                    stop_note_id=known_latest_note_id,
+                    progress_callback=_creator_progress_callback,
+                )
+            except DataFetchError as ex:
+                interrupted_by_error = True
+                utils.logger.error(f"[XiaoHongShuCrawler.get_creators_and_notes] Get creator notes error: {ex}")
 
             note_ids = [n.get("note_id") for n in all_notes_list]
             xsec_tokens = [n.get("xsec_token") for n in all_notes_list]
             await self.batch_get_note_comments(note_ids, xsec_tokens)
+
+            if self._incremental_enabled():
+                if interrupted_by_error:
+                    self._checkpoint.mark_scope_progress(
+                        scope_key,
+                        cursor=start_cursor,
+                        latest_item_id=newest_note_id_this_run or known_latest_note_id,
+                    )
+                else:
+                    self._checkpoint.mark_scope_completed(
+                        scope_key,
+                        latest_item_id=newest_note_id_this_run or known_latest_note_id,
+                    )
 
     async def fetch_creator_notes_detail(self, note_list: List[Dict]):
         """获取创作者笔记详情"""

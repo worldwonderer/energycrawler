@@ -22,6 +22,7 @@ from urllib.parse import urlparse
 import config
 from base.base_crawler import AbstractCrawler
 from store import twitter as twitter_store
+from tools.crawl_checkpoint import CrawlCheckpointManager
 from tools import utils
 from tools.safety import safe_sleep, calc_backoff_delay
 from var import crawler_type_var, source_keyword_var
@@ -80,6 +81,7 @@ class TwitterCrawler(AbstractCrawler):
         self._user_ids: List[str] = []
         self._tweet_ids: List[str] = []
         self._max_count: int = getattr(config, 'CRAWLER_MAX_NOTES_COUNT', 50)
+        self._checkpoint = CrawlCheckpointManager()
 
     async def start(self) -> None:
         """Start the Twitter crawler."""
@@ -169,6 +171,40 @@ class TwitterCrawler(AbstractCrawler):
             f"[TwitterCrawler._parse_config] Keywords: {self._keywords}, "
             f"User IDs: {self._user_ids}, Tweet IDs: {self._tweet_ids}, Max: {self._max_count}"
         )
+
+    @staticmethod
+    def _scope_key_search(keyword: str, search_type: str) -> str:
+        return f"x:search:{search_type}:{keyword}"
+
+    @staticmethod
+    def _scope_key_user_tweets(user_id: str) -> str:
+        return f"x:user_tweets:{user_id}"
+
+    @staticmethod
+    def _split_new_tweets_before_marker(
+        tweets: List[TwitterTweet],
+        known_latest_tweet_id: str,
+    ) -> tuple[List[TwitterTweet], bool]:
+        if not known_latest_tweet_id:
+            return tweets, False
+
+        new_tweets: List[TwitterTweet] = []
+        marker_found = False
+        for tweet in tweets:
+            tweet_id = str(tweet.id or "").strip()
+            if tweet_id and tweet_id == known_latest_tweet_id:
+                marker_found = True
+                break
+            new_tweets.append(tweet)
+        return new_tweets, marker_found
+
+    @staticmethod
+    def _incremental_enabled() -> bool:
+        return bool(getattr(config, "ENABLE_INCREMENTAL_CRAWL", False))
+
+    @staticmethod
+    def _resume_checkpoint_enabled() -> bool:
+        return bool(getattr(config, "RESUME_FROM_CHECKPOINT", True))
 
     async def _init_energy_adapter(self) -> None:
         """Initialize Energy browser adapter."""
@@ -277,9 +313,30 @@ class TwitterCrawler(AbstractCrawler):
             source_keyword_var.set(keyword)
             utils.logger.info(f"[TwitterCrawler.search] Searching for: {keyword}")
 
+            scope_key = self._scope_key_search(keyword, search_type.value)
+            known_latest_tweet_id = ""
+            newest_tweet_id_this_run = ""
             cursor = None
+            if self._incremental_enabled():
+                scope_state = self._checkpoint.get_scope(scope_key)
+                known_latest_tweet_id = str(scope_state.get("latest_item_id", "")).strip()
+                if self._resume_checkpoint_enabled() and scope_state.get("in_progress"):
+                    cursor = scope_state.get("cursor") or None
+                self._checkpoint.mark_scope_started(
+                    scope_key,
+                    platform="x",
+                    crawler_type="search",
+                    cursor=cursor or "",
+                    meta={"keyword": keyword, "search_type": search_type.value},
+                )
+                if known_latest_tweet_id:
+                    utils.logger.info(
+                        f"[TwitterCrawler.search] Incremental marker for '{keyword}': {known_latest_tweet_id}"
+                    )
+
             total_count = 0
             attempt = 0
+            interrupted_by_error = False
 
             while total_count < self._max_count:
                 try:
@@ -291,6 +348,12 @@ class TwitterCrawler(AbstractCrawler):
                     )
 
                     tweets: List[TwitterTweet] = result.get("tweets", [])
+                    marker_found = False
+                    if known_latest_tweet_id:
+                        tweets, marker_found = self._split_new_tweets_before_marker(
+                            tweets,
+                            known_latest_tweet_id,
+                        )
 
                     if not tweets:
                         utils.logger.info("[TwitterCrawler.search] No more tweets found")
@@ -309,15 +372,32 @@ class TwitterCrawler(AbstractCrawler):
                     ]
                     await asyncio.gather(*task_list)
 
+                    if tweets_to_process and not newest_tweet_id_this_run:
+                        newest_tweet_id_this_run = str(tweets_to_process[0].id or "").strip()
+
                     total_count += len(tweets_to_process)
                     attempt = 0
 
                     # Check for more results
+                    next_cursor = result.get("cursor")
+                    if self._incremental_enabled():
+                        self._checkpoint.mark_scope_progress(
+                            scope_key,
+                            cursor=next_cursor or "",
+                            latest_item_id=newest_tweet_id_this_run or known_latest_tweet_id,
+                        )
+
+                    if marker_found:
+                        utils.logger.info(
+                            f"[TwitterCrawler.search] Reached incremental marker for '{keyword}', stop pagination"
+                        )
+                        break
+
                     if not result.get("has_more", False):
                         utils.logger.info("[TwitterCrawler.search] No more results")
                         break
 
-                    cursor = result.get("cursor")
+                    cursor = next_cursor
                     if not cursor:
                         break
 
@@ -330,8 +410,22 @@ class TwitterCrawler(AbstractCrawler):
                         f"[TwitterCrawler.search] Error searching tweets (attempt={attempt}): {e}"
                     )
                     if attempt >= 3:
+                        interrupted_by_error = True
                         break
                     await safe_sleep(calc_backoff_delay(attempt))
+
+            if self._incremental_enabled():
+                if interrupted_by_error:
+                    self._checkpoint.mark_scope_progress(
+                        scope_key,
+                        cursor=cursor or "",
+                        latest_item_id=newest_tweet_id_this_run or known_latest_tweet_id,
+                    )
+                else:
+                    self._checkpoint.mark_scope_completed(
+                        scope_key,
+                        latest_item_id=newest_tweet_id_this_run or known_latest_tweet_id,
+                    )
 
             utils.logger.info(f"[TwitterCrawler.search] Total tweets collected for '{keyword}': {total_count}")
 
@@ -372,9 +466,31 @@ class TwitterCrawler(AbstractCrawler):
                 f"(resolved_id={resolved_user_id})"
             )
 
+            scope_key = self._scope_key_user_tweets(resolved_user_id)
+            known_latest_tweet_id = ""
+            newest_tweet_id_this_run = ""
             cursor = None
+            if self._incremental_enabled():
+                scope_state = self._checkpoint.get_scope(scope_key)
+                known_latest_tweet_id = str(scope_state.get("latest_item_id", "")).strip()
+                if self._resume_checkpoint_enabled() and scope_state.get("in_progress"):
+                    cursor = scope_state.get("cursor") or None
+                self._checkpoint.mark_scope_started(
+                    scope_key,
+                    platform="x",
+                    crawler_type="creator",
+                    cursor=cursor or "",
+                    meta={"requested_user_id": requested_user_id, "resolved_user_id": resolved_user_id},
+                )
+                if known_latest_tweet_id:
+                    utils.logger.info(
+                        f"[TwitterCrawler.get_user_tweets] Incremental marker for {requested_user_id}: "
+                        f"{known_latest_tweet_id}"
+                    )
+
             total_count = 0
             attempt = 0
+            interrupted_by_error = False
 
             while total_count < self._max_count:
                 try:
@@ -386,6 +502,12 @@ class TwitterCrawler(AbstractCrawler):
                     )
 
                     tweets: List[TwitterTweet] = result.get("tweets", [])
+                    marker_found = False
+                    if known_latest_tweet_id:
+                        tweets, marker_found = self._split_new_tweets_before_marker(
+                            tweets,
+                            known_latest_tweet_id,
+                        )
 
                     if not tweets:
                         utils.logger.info("[TwitterCrawler.get_user_tweets] No more tweets found")
@@ -404,15 +526,33 @@ class TwitterCrawler(AbstractCrawler):
                     ]
                     await asyncio.gather(*task_list)
 
+                    if tweets_to_process and not newest_tweet_id_this_run:
+                        newest_tweet_id_this_run = str(tweets_to_process[0].id or "").strip()
+
                     total_count += len(tweets_to_process)
                     attempt = 0
 
                     # Check for more results
+                    next_cursor = result.get("cursor")
+                    if self._incremental_enabled():
+                        self._checkpoint.mark_scope_progress(
+                            scope_key,
+                            cursor=next_cursor or "",
+                            latest_item_id=newest_tweet_id_this_run or known_latest_tweet_id,
+                        )
+
+                    if marker_found:
+                        utils.logger.info(
+                            f"[TwitterCrawler.get_user_tweets] Reached incremental marker for {requested_user_id}, "
+                            "stop pagination"
+                        )
+                        break
+
                     if not result.get("has_more", False):
                         utils.logger.info("[TwitterCrawler.get_user_tweets] No more results")
                         break
 
-                    cursor = result.get("cursor")
+                    cursor = next_cursor
                     if not cursor:
                         break
 
@@ -425,8 +565,22 @@ class TwitterCrawler(AbstractCrawler):
                         f"[TwitterCrawler.get_user_tweets] Error fetching tweets (attempt={attempt}): {e}"
                     )
                     if attempt >= 3:
+                        interrupted_by_error = True
                         break
                     await safe_sleep(calc_backoff_delay(attempt))
+
+            if self._incremental_enabled():
+                if interrupted_by_error:
+                    self._checkpoint.mark_scope_progress(
+                        scope_key,
+                        cursor=cursor or "",
+                        latest_item_id=newest_tweet_id_this_run or known_latest_tweet_id,
+                    )
+                else:
+                    self._checkpoint.mark_scope_completed(
+                        scope_key,
+                        latest_item_id=newest_tweet_id_this_run or known_latest_tweet_id,
+                    )
 
             utils.logger.info(
                 f"[TwitterCrawler.get_user_tweets] Total tweets for user {requested_user_id} "

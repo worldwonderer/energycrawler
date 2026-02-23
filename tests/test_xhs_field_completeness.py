@@ -149,3 +149,14 @@ def test_xhs_db_normalize_json_text_avoids_double_encoding():
 
     normalized_dict = XhsDbStoreImplement._normalize_json_text({"info": "tag"})
     assert json.loads(normalized_dict) == {"info": "tag"}
+
+
+def test_split_new_notes_before_marker_stops_at_known_note():
+    notes = [
+        {"id": "note-new-3"},
+        {"id": "note-known-2"},
+        {"id": "note-old-1"},
+    ]
+    new_notes, marker_found = XiaoHongShuCrawler._split_new_notes_before_marker(notes, "note-known-2")
+    assert marker_found is True
+    assert [n["id"] for n in new_notes] == ["note-new-3"]

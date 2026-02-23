@@ -109,3 +109,108 @@ async def test_close_is_idempotent():
 
     assert close_calls["client"] == 1
     assert close_calls["disconnect"] == 1
+
+
+@pytest.mark.asyncio
+async def test_get_user_tweets_resume_uses_checkpoint_cursor(monkeypatch):
+    crawler = TwitterCrawler()
+    crawler._user_ids = ["123456"]
+    crawler._max_count = 1
+
+    monkeypatch.setattr(config, "ENABLE_INCREMENTAL_CRAWL", True)
+    monkeypatch.setattr(config, "RESUME_FROM_CHECKPOINT", True)
+
+    call_state = {"cursor": None}
+
+    class _FakeCheckpoint:
+        def get_scope(self, _scope):
+            return {"in_progress": True, "cursor": "CURSOR_RESUME", "latest_item_id": ""}
+
+        def mark_scope_started(self, *_args, **_kwargs):
+            return {}
+
+        def mark_scope_progress(self, *_args, **_kwargs):
+            return {}
+
+        def mark_scope_completed(self, *_args, **_kwargs):
+            return {}
+
+    class _FakeClient:
+        async def get_user_by_screen_name(self, _screen_name):
+            return None
+
+        async def get_user_tweets(self, user_id, count, cursor, include_replies):
+            assert user_id == "123456"
+            assert count == 1
+            assert include_replies is False
+            call_state["cursor"] = cursor
+            return {"tweets": [TwitterTweet(id="tweet-1")], "has_more": False, "cursor": None}
+
+    async def _fake_process_tweet(_tweet, _semaphore):
+        return None
+
+    crawler._checkpoint = _FakeCheckpoint()
+    crawler.twitter_client = _FakeClient()
+    crawler._process_tweet_async_task = _fake_process_tweet  # type: ignore[method-assign]
+
+    await crawler.get_user_tweets()
+    assert call_state["cursor"] == "CURSOR_RESUME"
+
+
+@pytest.mark.asyncio
+async def test_get_user_tweets_incremental_stops_at_known_marker(monkeypatch):
+    crawler = TwitterCrawler()
+    crawler._user_ids = ["123456"]
+    crawler._max_count = 5
+
+    monkeypatch.setattr(config, "ENABLE_INCREMENTAL_CRAWL", True)
+    monkeypatch.setattr(config, "RESUME_FROM_CHECKPOINT", True)
+
+    call_state = {"api_calls": 0, "processed": [], "completed_latest_id": None}
+
+    class _FakeCheckpoint:
+        def get_scope(self, _scope):
+            return {"in_progress": False, "cursor": "", "latest_item_id": "old-2"}
+
+        def mark_scope_started(self, *_args, **_kwargs):
+            return {}
+
+        def mark_scope_progress(self, *_args, **_kwargs):
+            return {}
+
+        def mark_scope_completed(self, *_args, **kwargs):
+            call_state["completed_latest_id"] = kwargs.get("latest_item_id")
+            return {}
+
+    class _FakeClient:
+        async def get_user_by_screen_name(self, _screen_name):
+            return None
+
+        async def get_user_tweets(self, user_id, count, cursor, include_replies):
+            call_state["api_calls"] += 1
+            assert user_id == "123456"
+            assert include_replies is False
+            assert count == 5
+            assert cursor is None
+            return {
+                "tweets": [
+                    TwitterTweet(id="new-1"),
+                    TwitterTweet(id="old-2"),
+                    TwitterTweet(id="old-3"),
+                ],
+                "has_more": True,
+                "cursor": "CURSOR_NEXT",
+            }
+
+    async def _fake_process_tweet(tweet, _semaphore):
+        call_state["processed"].append(tweet.id)
+
+    crawler._checkpoint = _FakeCheckpoint()
+    crawler.twitter_client = _FakeClient()
+    crawler._process_tweet_async_task = _fake_process_tweet  # type: ignore[method-assign]
+
+    await crawler.get_user_tweets()
+
+    assert call_state["api_calls"] == 1
+    assert call_state["processed"] == ["new-1"]
+    assert call_state["completed_latest_id"] == "new-1"

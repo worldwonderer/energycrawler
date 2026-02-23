@@ -168,6 +168,16 @@ ENABLE_GET_SUB_COMMENTS = _getenv_bool("ENABLE_GET_SUB_COMMENTS", False)
 # Crawl interval
 CRAWLER_MAX_SLEEP_SEC = _getenv_float("CRAWLER_MAX_SLEEP_SEC", 10)
 
+# ==================== Incremental Crawl / Resume ====================
+# Enable incremental crawling (fetch newly added content only where supported).
+ENABLE_INCREMENTAL_CRAWL = _getenv_bool("ENABLE_INCREMENTAL_CRAWL", False)
+
+# Resume from last checkpoint after interruption.
+RESUME_FROM_CHECKPOINT = _getenv_bool("RESUME_FROM_CHECKPOINT", True)
+
+# Optional custom checkpoint file path.
+CRAWLER_CHECKPOINT_PATH = os.getenv("CRAWLER_CHECKPOINT_PATH", "").strip()
+
 # ==================== Safety Controls ====================
 # Hard safety ceilings to reduce account risk for small-batch crawling.
 CRAWLER_HARD_MAX_NOTES_COUNT = int(os.getenv("CRAWLER_HARD_MAX_NOTES_COUNT", "20"))
