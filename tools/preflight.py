@@ -150,7 +150,13 @@ def build_preflight_failure_hint(platform: str, message: str) -> str:
 
 def ensure_energy_service_or_raise(platform: str = "") -> None:
     check_platform = (platform or getattr(config, "PLATFORM", "")).strip().lower()
-    ok, message = preflight_for_platform(check_platform, getattr(config, "COOKIES", ""))
+    cookie_header = ""
+    if check_platform in {"x", "twitter"}:
+        cookie_header = getattr(config, "TWITTER_COOKIE", "")
+    elif check_platform in {"xhs", "xiaohongshu"}:
+        cookie_header = getattr(config, "COOKIES", "")
+
+    ok, message = preflight_for_platform(check_platform, cookie_header)
     if not ok:
         raise RuntimeError(build_preflight_failure_hint(check_platform, message))
 

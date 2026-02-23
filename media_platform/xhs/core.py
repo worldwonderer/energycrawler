@@ -175,10 +175,18 @@ class XiaoHongShuCrawler(AbstractCrawler):
 
     async def _create_xhs_client(self) -> XiaoHongShuClient:
         """创建 XHS 客户端"""
-        # 从 Energy 获取 Cookie
-        cookie_dict = self.energy_adapter.get_cookies()
-        if not cookie_dict and self._cookie_header:
-            cookie_dict = utils.convert_str_cookie_to_dict(self._cookie_header)
+        # 从 Energy 获取 Cookie。若显式配置了 COOKIES，则以显式值为准，避免
+        # 页面加载后匿名 cookie 覆盖手动注入的登录态 cookie（如 web_session/id_token/a1）。
+        energy_cookie_dict = self.energy_adapter.get_cookies()
+        configured_cookie_dict = (
+            utils.convert_str_cookie_to_dict(self._cookie_header)
+            if self._cookie_header
+            else {}
+        )
+        if configured_cookie_dict:
+            cookie_dict = {**energy_cookie_dict, **configured_cookie_dict}
+        else:
+            cookie_dict = energy_cookie_dict
         cookie_str = "; ".join([f"{k}={v}" for k, v in cookie_dict.items()])
 
         client = XiaoHongShuClient(

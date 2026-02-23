@@ -10,6 +10,7 @@ import pytest
 
 from api.schemas import CrawlerStartRequest
 from api.services.crawler_manager import CrawlerManager
+from tools.cookiecloud_sync import CookieCloudSyncResult
 
 crawler_manager_module = importlib.import_module("api.services.crawler_manager")
 
@@ -271,3 +272,47 @@ def test_worker_env_includes_cluster_browser_id(monkeypatch):
 
     env = manager._build_worker_env(task, worker_id=2)
     assert env["ENERGYCRAWLER_BROWSER_ID"] == "cluster_xhs_w2_task-000123"
+
+
+@pytest.mark.asyncio
+async def test_start_uses_cookiecloud_synced_cookie_for_api_task(monkeypatch):
+    captured = {"cookie_header": ""}
+
+    async def _fake_to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    def _fake_preflight(_platform: str, cookie_header: str = ""):
+        captured["cookie_header"] = cookie_header
+        return True, "ok"
+
+    def _fake_sync(_platform: str, _explicit_cookie_header: str = ""):
+        return CookieCloudSyncResult(
+            platform="x",
+            enabled=True,
+            attempted=True,
+            applied=True,
+            cookie_header="auth_token=synced; ct0=synced",
+            cookie_count=2,
+            source="stub",
+            message="applied",
+        )
+
+    monkeypatch.setattr(crawler_manager_module.asyncio, "to_thread", _fake_to_thread)
+    monkeypatch.setattr(crawler_manager_module, "sync_cookiecloud_login_state", _fake_sync)
+    monkeypatch.setattr(crawler_manager_module, "preflight_for_platform", _fake_preflight)
+
+    factory = _FakeProcessFactory()
+    manager = CrawlerManager(max_workers=1, process_factory=factory, enable_output_reader=False)
+    request = CrawlerStartRequest(
+        platform="x",
+        crawler_type="creator",
+        login_type="cookie",
+        creator_ids="elonmusk",
+        save_option="json",
+        cookies="",
+    )
+
+    result = await manager.start(request)
+    assert result["accepted"] is True
+    assert captured["cookie_header"] == "auth_token=synced; ct0=synced"
+    assert request.cookies == "auth_token=synced; ct0=synced"

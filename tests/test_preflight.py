@@ -104,3 +104,20 @@ def test_ensure_energy_service_or_raise_validates_twitter_auth(monkeypatch):
         preflight.ensure_energy_service_or_raise("x")
     assert "Missing Twitter auth material" in str(exc.value)
     assert "Actionable next steps:" in str(exc.value)
+
+
+def test_ensure_energy_service_or_raise_uses_twitter_cookie_for_x(monkeypatch):
+    captured = {"platform": "", "cookie": ""}
+
+    def _fake_preflight(platform: str, cookie_header: str = ""):
+        captured["platform"] = platform
+        captured["cookie"] = cookie_header
+        return True, "ok"
+
+    monkeypatch.setattr(preflight, "preflight_for_platform", _fake_preflight)
+    monkeypatch.setattr(preflight.config, "TWITTER_COOKIE", "auth_token=abc; ct0=def", raising=False)
+    monkeypatch.setattr(preflight.config, "COOKIES", "a1=xhs-only", raising=False)
+
+    preflight.ensure_energy_service_or_raise("x")
+    assert captured["platform"] == "x"
+    assert captured["cookie"] == "auth_token=abc; ct0=def"

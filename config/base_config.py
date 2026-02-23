@@ -178,6 +178,19 @@ RESUME_FROM_CHECKPOINT = _getenv_bool("RESUME_FROM_CHECKPOINT", True)
 # Optional custom checkpoint file path.
 CRAWLER_CHECKPOINT_PATH = os.getenv("CRAWLER_CHECKPOINT_PATH", "").strip()
 
+# ==================== CookieCloud Sync ====================
+# Pull latest cookies from CookieCloud before crawl starts.
+COOKIECLOUD_ENABLED = _getenv_bool("COOKIECLOUD_ENABLED", False)
+
+# Force overwrite local COOKIES even when COOKIES is already configured.
+COOKIECLOUD_FORCE_SYNC = _getenv_bool("COOKIECLOUD_FORCE_SYNC", False)
+
+# CookieCloud server settings.
+COOKIECLOUD_SERVER = os.getenv("COOKIECLOUD_SERVER", "").strip()
+COOKIECLOUD_UUID = os.getenv("COOKIECLOUD_UUID", "").strip()
+COOKIECLOUD_PASSWORD = os.getenv("COOKIECLOUD_PASSWORD", "").strip()
+COOKIECLOUD_TIMEOUT_SEC = _getenv_float("COOKIECLOUD_TIMEOUT_SEC", 10.0)
+
 # ==================== Safety Controls ====================
 # Hard safety ceilings to reduce account risk for small-batch crawling.
 CRAWLER_HARD_MAX_NOTES_COUNT = int(os.getenv("CRAWLER_HARD_MAX_NOTES_COUNT", "20"))

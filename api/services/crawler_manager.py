@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Callable, Deque, List, Optional
 
 from ..schemas import CrawlerStartRequest, LogEntry
+from tools.cookiecloud_sync import sync_cookiecloud_login_state
 from tools import utils
 from tools.preflight import build_preflight_failure_hint, preflight_for_platform
 
@@ -126,6 +127,28 @@ class CrawlerManager:
 
     async def start(self, config: CrawlerStartRequest) -> dict:
         """Enqueue crawler task and dispatch to idle workers."""
+        cookiecloud_result = await asyncio.to_thread(
+            sync_cookiecloud_login_state,
+            config.platform.value,
+            config.cookies,
+        )
+        if cookiecloud_result.applied and not config.cookies and cookiecloud_result.cookie_header:
+            config.cookies = cookiecloud_result.cookie_header
+            entry = self._create_log_entry(
+                (
+                    "[AUTH] CookieCloud synced runtime cookies "
+                    f"(platform={config.platform.value}, count={cookiecloud_result.cookie_count})"
+                ),
+                "info",
+            )
+            await self._push_log(entry)
+        elif cookiecloud_result.attempted and not cookiecloud_result.applied:
+            entry = self._create_log_entry(
+                f"[AUTH] CookieCloud sync failed: {cookiecloud_result.message}",
+                "warning",
+            )
+            await self._push_log(entry)
+
         ok, preflight_message = preflight_for_platform(config.platform.value, config.cookies)
         if not ok:
             hint_message = build_preflight_failure_hint(config.platform.value, preflight_message)

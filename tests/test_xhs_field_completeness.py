@@ -160,3 +160,28 @@ def test_split_new_notes_before_marker_stops_at_known_note():
     new_notes, marker_found = XiaoHongShuCrawler._split_new_notes_before_marker(notes, "note-known-2")
     assert marker_found is True
     assert [n["id"] for n in new_notes] == ["note-new-3"]
+
+
+@pytest.mark.asyncio
+async def test_create_xhs_client_prefers_explicit_cookie_values_over_runtime_cookie_refresh():
+    crawler = XiaoHongShuCrawler()
+    crawler._cookie_header = "a1=config-a1; web_session=config-session; id_token=config-id-token"
+
+    class _FakeEnergyAdapter:
+        def get_cookies(self):
+            # Simulate runtime cookie refresh after page load (anonymous/session-rotated values)
+            return {
+                "a1": "runtime-a1",
+                "web_session": "runtime-session",
+                "id_token": "runtime-id-token",
+                "acw_tc": "runtime-acw",
+            }
+
+    crawler.energy_adapter = _FakeEnergyAdapter()
+
+    client = await crawler._create_xhs_client()
+    assert client.cookie_dict["a1"] == "config-a1"
+    assert client.cookie_dict["web_session"] == "config-session"
+    assert client.cookie_dict["id_token"] == "config-id-token"
+    # Runtime-only cookies should still be retained.
+    assert client.cookie_dict["acw_tc"] == "runtime-acw"

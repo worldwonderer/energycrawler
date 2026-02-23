@@ -89,6 +89,7 @@ uv run energycrawler energy check --host localhost --port 50051
 - `LOGIN_TYPE = "cookie"`（当前仅保留 Cookie 注入登录态）
 - `ENERGY_SERVICE_ADDRESS = "localhost:50051"`
 - X 平台鉴权：`TWITTER_AUTH_TOKEN`、`TWITTER_CT0`（也支持 `TWITTER_COOKIE` 自动提取并透传全量 Cookie）
+- CookieCloud 自动同步：`COOKIECLOUD_ENABLED`、`COOKIECLOUD_SERVER`、`COOKIECLOUD_UUID`、`COOKIECLOUD_PASSWORD`
 - 安全上限：`CRAWLER_HARD_MAX_NOTES_COUNT`、`CRAWLER_HARD_MAX_CONCURRENCY`、`CRAWLER_MIN_SLEEP_SEC`
 
 登录后可把浏览器 Cookie 持久化到 `.env`：
@@ -108,6 +109,21 @@ uv run energycrawler auth export --platform all --xhs-browser-id manual_login_xh
 ```bash
 uv run energycrawler auth status --host localhost --port 50051
 ```
+
+如需用 CookieCloud 持续维护登录态（支持 `xhs` / `x`）：
+
+```bash
+# .env 示例
+COOKIECLOUD_ENABLED=true
+COOKIECLOUD_SERVER=http://127.0.0.1:8088
+COOKIECLOUD_UUID=你的UUID
+COOKIECLOUD_PASSWORD=你的PASSWORD
+
+# 可选：本地已有 COOKIES/TWITTER_COOKIE 时是否强制覆盖
+COOKIECLOUD_FORCE_SYNC=false
+```
+
+开启后，CLI 与 API 任务在启动前都会自动尝试同步对应平台 Cookie；默认不覆盖本地已有登录态（除非 `COOKIECLOUD_FORCE_SYNC=true`）。
 
 统一入口（等价命令）：
 

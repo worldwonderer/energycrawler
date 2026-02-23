@@ -38,6 +38,7 @@ import config
 from database import db
 from base.base_crawler import AbstractCrawler
 from tools import utils
+from tools.cookiecloud_sync import sync_cookiecloud_login_state
 from tools.preflight import ensure_energy_service_or_raise
 from tools.safety import enforce_runtime_safety
 
@@ -87,6 +88,13 @@ async def main() -> None:
 
     args = await cmd_arg.parse_cmd()
     enforce_runtime_safety()
+
+    cookiecloud_result = sync_cookiecloud_login_state(config.PLATFORM)
+    if cookiecloud_result.applied:
+        utils.logger.info(f"[Main] {cookiecloud_result.message}")
+    elif cookiecloud_result.attempted and not cookiecloud_result.applied:
+        utils.logger.warning(f"[Main] {cookiecloud_result.message}")
+
     utils.log_event(
         "crawler.run.begin",
         platform=config.PLATFORM,
