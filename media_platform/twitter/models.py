@@ -144,8 +144,8 @@ def _parse_media_from_response(media_data: dict) -> TwitterMedia:
     media.width = original_info.get("width", 0)
     media.height = original_info.get("height", 0)
 
-    # Video-specific fields
-    if media_type == "video":
+    # Video/GIF-specific fields
+    if media_type in {"video", "animated_gif"}:
         video_info = media_data.get("video_info", {})
         media.duration_ms = video_info.get("duration_millis", 0)
 

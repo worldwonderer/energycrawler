@@ -20,6 +20,7 @@
 # @Time    : 2025/2/17
 # @Desc    : Twitter/X.com storage module
 
+import json
 from typing import Dict
 
 import config
@@ -109,6 +110,9 @@ async def update_twitter_tweet(tweet_item: Dict):
         "possibly_sensitive": tweet_item.get("possibly_sensitive", False),
         "tweet_url": tweet_item.get("tweet_url"),
         "hashtags": ",".join(tweet_item.get("hashtags", [])),
+        "urls": json.dumps(tweet_item.get("urls", []), ensure_ascii=False),
+        "user_mentions": json.dumps(tweet_item.get("user_mentions", []), ensure_ascii=False),
+        "media_detail": json.dumps(media_list, ensure_ascii=False),
         "media_urls": ",".join(media_urls),
         "video_urls": ",".join(video_urls),
         "source_keyword": source_keyword_var.get(),

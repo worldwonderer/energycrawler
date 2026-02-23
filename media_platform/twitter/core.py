@@ -144,7 +144,7 @@ class TwitterCrawler(AbstractCrawler):
             "tweet_detail": TwitterCrawlerMode.TWEET_DETAIL,
             "detail": TwitterCrawlerMode.TWEET_DETAIL,
             "user_info": TwitterCrawlerMode.USER_INFO,
-            "creator": TwitterCrawlerMode.USER_INFO,
+            "creator": TwitterCrawlerMode.USER_TWEETS,
         }
 
         return mode_map.get(crawler_type, TwitterCrawlerMode.SEARCH)
@@ -344,7 +344,33 @@ class TwitterCrawler(AbstractCrawler):
             return
 
         for user_id in self._user_ids:
-            utils.logger.info(f"[TwitterCrawler.get_user_tweets] Fetching tweets for user: {user_id}")
+            requested_user_id = str(user_id).strip()
+            resolved_user_id = requested_user_id
+
+            if requested_user_id.startswith("@"):
+                requested_user_id = requested_user_id[1:]
+                resolved_user_id = requested_user_id
+
+            if requested_user_id and not requested_user_id.isdigit():
+                try:
+                    user = await self.twitter_client.get_user_by_screen_name(requested_user_id)
+                    if not user or not user.id:
+                        utils.logger.warning(
+                            f"[TwitterCrawler.get_user_tweets] User not found: {requested_user_id}"
+                        )
+                        continue
+                    resolved_user_id = user.id
+                    await self._store_user(user)
+                except TwitterError as e:
+                    utils.logger.error(
+                        f"[TwitterCrawler.get_user_tweets] Error resolving user {requested_user_id}: {e}"
+                    )
+                    continue
+
+            utils.logger.info(
+                f"[TwitterCrawler.get_user_tweets] Fetching tweets for user: {requested_user_id} "
+                f"(resolved_id={resolved_user_id})"
+            )
 
             cursor = None
             total_count = 0
@@ -353,7 +379,7 @@ class TwitterCrawler(AbstractCrawler):
             while total_count < self._max_count:
                 try:
                     result = await self.twitter_client.get_user_tweets(
-                        user_id=user_id,
+                        user_id=resolved_user_id,
                         count=min(20, self._max_count - total_count),
                         cursor=cursor,
                         include_replies=False,
@@ -402,7 +428,10 @@ class TwitterCrawler(AbstractCrawler):
                         break
                     await safe_sleep(calc_backoff_delay(attempt))
 
-            utils.logger.info(f"[TwitterCrawler.get_user_tweets] Total tweets for user {user_id}: {total_count}")
+            utils.logger.info(
+                f"[TwitterCrawler.get_user_tweets] Total tweets for user {requested_user_id} "
+                f"(resolved_id={resolved_user_id}): {total_count}"
+            )
 
     async def get_tweet_detail(self) -> None:
         """Get tweet details."""
@@ -517,7 +546,8 @@ class TwitterCrawler(AbstractCrawler):
 
         for idx, media in enumerate(tweet.media):
             try:
-                url = media.video_url if media.media_type == "video" else media.media_url
+                use_video_url = media.media_type in {"video", "animated_gif"}
+                url = media.video_url if use_video_url else media.media_url
                 if not url:
                     continue
 
@@ -587,11 +617,17 @@ class TwitterCrawler(AbstractCrawler):
     def _tweet_to_store_item(self, tweet: TwitterTweet) -> Dict[str, Any]:
         media_list = [
             {
+                "media_key": media.media_key,
+                "media_id": media.media_id,
                 "media_type": media.media_type,
                 "media_url": media.media_url,
                 "video_url": media.video_url,
                 "display_url": media.display_url,
                 "expanded_url": media.expanded_url,
+                "width": media.width,
+                "height": media.height,
+                "duration_ms": media.duration_ms,
+                "view_count": media.view_count,
             }
             for media in (tweet.media or [])
         ]
@@ -620,6 +656,8 @@ class TwitterCrawler(AbstractCrawler):
             "possibly_sensitive": tweet.possibly_sensitive,
             "tweet_url": tweet.tweet_url,
             "hashtags": tweet.hashtags or [],
+            "urls": tweet.urls or [],
+            "user_mentions": tweet.user_mentions or [],
             "media": media_list,
         }
 
@@ -715,11 +753,16 @@ class TwitterCrawler(AbstractCrawler):
                 utils.logger.info("[TwitterCrawler.close] Twitter client closed")
             except Exception as e:
                 utils.logger.error(f"[TwitterCrawler.close] Error closing Twitter client: {e}")
+            finally:
+                self.twitter_client = None
 
         # Disconnect Energy adapter
         if self.energy_adapter:
             try:
-                self.energy_adapter.browser.close_browser(self.energy_adapter.browser_id)
+                browser_client = getattr(self.energy_adapter, "browser", None)
+                browser_id = getattr(self.energy_adapter, "browser_id", None)
+                if browser_client and browser_id:
+                    browser_client.close_browser(browser_id)
             except Exception as e:
                 utils.logger.warning(f"[TwitterCrawler.close] Error closing Energy browser: {e}")
             try:
@@ -727,6 +770,8 @@ class TwitterCrawler(AbstractCrawler):
                 utils.logger.info("[TwitterCrawler.close] Energy adapter disconnected")
             except Exception as e:
                 utils.logger.error(f"[TwitterCrawler.close] Error disconnecting Energy adapter: {e}")
+            finally:
+                self.energy_adapter = None
 
     # ==================== DOM Extraction Methods (No Login Required) ====================
 

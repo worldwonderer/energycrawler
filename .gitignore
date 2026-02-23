@@ -211,3 +211,6 @@ energy/
 # Backup/legacy files
 *_legacy.py
 *_backup.py
+
+# OMX runtime workspace
+.omx/

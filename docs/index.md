@@ -63,6 +63,7 @@ uv run uvicorn api.main:app --port 8080 --reload
 参考：
 - [数据保存指南](data_storage_guide.md)
 - [Excel 导出指南](excel_export_guide.md)
+- [xhs/x 字段对照清单（creator）](field_mapping_xhs_x.md)
 
 ## 进阶文档
 

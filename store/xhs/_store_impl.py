@@ -61,7 +61,12 @@ class XhsCsvStoreImplement(AbstractStore):
 
 
     async def store_creator(self, creator_item: Dict):
-        pass
+        """
+        store creator data to csv file
+        :param creator_item:
+        :return:
+        """
+        await self.writer.write_to_csv(item_type="creators", item=creator_item)
 
     def flush(self):
         pass
@@ -89,7 +94,12 @@ class XhsJsonStoreImplement(AbstractStore):
         await self.writer.write_single_item_to_json(item_type="comments", item=comment_item)
 
     async def store_creator(self, creator_item: Dict):
-        pass
+        """
+        store creator data to json file
+        :param creator_item:
+        :return:
+        """
+        await self.writer.write_single_item_to_json(item_type="creators", item=creator_item)
 
     def flush(self):
         """
@@ -103,6 +113,21 @@ class XhsJsonStoreImplement(AbstractStore):
 class XhsDbStoreImplement(AbstractStore):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+
+    @staticmethod
+    def _normalize_json_text(value: Any) -> str:
+        """
+        Keep JSON-like text stable for DB storage:
+        - pass-through string values (avoid double json.dumps)
+        - serialize dict/list to JSON text
+        """
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False)
+        return str(value)
 
     async def store_content(self, content_item: Dict):
         note_id = content_item.get("note_id")
@@ -135,8 +160,8 @@ class XhsDbStoreImplement(AbstractStore):
             collected_count=str(content_item.get("collected_count")),
             comment_count=str(content_item.get("comment_count")),
             share_count=str(content_item.get("share_count")),
-            image_list=json.dumps(content_item.get("image_list")),
-            tag_list=json.dumps(content_item.get("tag_list")),
+            image_list=content_item.get("image_list"),
+            tag_list=content_item.get("tag_list"),
             note_url=content_item.get("note_url"),
             source_keyword=content_item.get("source_keyword", ""),
             xsec_token=content_item.get("xsec_token", "")
@@ -189,7 +214,7 @@ class XhsDbStoreImplement(AbstractStore):
             note_id=comment_item.get("note_id"),
             content=comment_item.get("content"),
             sub_comment_count=int(comment_item.get("sub_comment_count", 0) or 0),
-            pictures=json.dumps(comment_item.get("pictures")),
+            pictures=comment_item.get("pictures"),
             parent_comment_id=str(comment_item.get("parent_comment_id", "")),
             like_count=str(comment_item.get("like_count"))
         )
@@ -236,7 +261,7 @@ class XhsDbStoreImplement(AbstractStore):
             follows=str(creator_item.get("follows")),
             fans=str(creator_item.get("fans")),
             interaction=str(creator_item.get("interaction")),
-            tag_list=json.dumps(creator_item.get("tag_list"))
+            tag_list=self._normalize_json_text(creator_item.get("tag_list")),
         )
         session.add(creator)
 
@@ -251,7 +276,7 @@ class XhsDbStoreImplement(AbstractStore):
             "follows": str(creator_item.get("follows")),
             "fans": str(creator_item.get("fans")),
             "interaction": str(creator_item.get("interaction")),
-            "tag_list": json.dumps(creator_item.get("tag_list"))
+            "tag_list": self._normalize_json_text(creator_item.get("tag_list")),
         }
         stmt = update(XhsCreator).where(XhsCreator.user_id == user_id).values(**update_data)
         await session.execute(stmt)

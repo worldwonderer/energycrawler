@@ -16,7 +16,7 @@
 # 详细许可条款请参阅项目根目录下的LICENSE文件。
 # 使用本代码即表示您同意遵守上述原则和LICENSE中的所有条款。
 
-from sqlalchemy import text
+from sqlalchemy import text, inspect
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from contextlib import asynccontextmanager
@@ -82,6 +82,30 @@ async def create_tables(db_type: str = None):
     if engine:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            await conn.run_sync(_ensure_twitter_tweet_schema)
+
+
+def _ensure_twitter_tweet_schema(sync_conn) -> None:
+    """
+    Lightweight compatibility migration for twitter_tweet table.
+    Existing databases may miss recently added columns because create_all
+    does not alter existing tables.
+    """
+    inspector = inspect(sync_conn)
+    if "twitter_tweet" not in set(inspector.get_table_names()):
+        return
+
+    existing_columns = {column["name"] for column in inspector.get_columns("twitter_tweet")}
+    required_columns = {
+        "urls": "TEXT",
+        "user_mentions": "TEXT",
+        "media_detail": "TEXT",
+    }
+
+    for column_name, column_type in required_columns.items():
+        if column_name in existing_columns:
+            continue
+        sync_conn.execute(text(f"ALTER TABLE twitter_tweet ADD COLUMN {column_name} {column_type}"))
 
 
 @asynccontextmanager

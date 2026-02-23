@@ -27,7 +27,7 @@ Usage:
 """
 
 import asyncio
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 
 import config
 from base.base_crawler import AbstractCrawler
@@ -259,7 +259,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
         semaphore = asyncio.Semaphore(config.MAX_CONCURRENCY_NUM)
         task_list = []
 
-        for note_url in config.XHS_SPECIFIED_ID_LIST:
+        for note_url in config.XHS_SPECIFIED_NOTE_URL_LIST:
             note_info: NoteUrlInfo = parse_note_info_from_note_url(note_url)
             task_list.append(
                 self.get_note_detail_async_task(
@@ -430,18 +430,21 @@ class XiaoHongShuCrawler(AbstractCrawler):
                         xsec_token=xsec_token,
                         cursor=cursor,
                     )
-                    if not sub_comments_res or not sub_comments_res.get("has_more", False):
+                    if not sub_comments_res:
                         break
-                    cursor = sub_comments_res.get("cursor", "")
                     sub_comments = sub_comments_res.get("comments", [])
-                    if not sub_comments:
-                        break
                     for sub_comment in sub_comments:
                         await xhs_store.update_xhs_note_sub_comment(
                             note_id=note_id,
                             root_comment_id=root_comment_id,
                             sub_comment=sub_comment,
                         )
+                    if not sub_comments_res.get("has_more", False):
+                        break
+                    cursor = sub_comments_res.get("cursor", "")
+                    if not cursor:
+                        break
+                    await safe_sleep()
             except DataFetchError as ex:
                 utils.logger.error(f"[XiaoHongShuCrawler.get_sub_comments] Get sub comments error: {ex}")
 
@@ -457,21 +460,19 @@ class XiaoHongShuCrawler(AbstractCrawler):
             if img.get("url_default") != "":
                 img.update({"url": img.get("url_default")})
 
-        if not image_list:
-            return
-
-        pic_num = 0
-        for pic in image_list:
-            url = pic.get("url")
-            if not url:
-                continue
-            content = await self.xhs_client.get_note_media(url)
-            await safe_sleep(1.0)
-            if content is None:
-                continue
-            extension_file_name = f"{pic_num}.jpg"
-            pic_num += 1
-            await xhs_store.update_xhs_note_image(note_id, content, extension_file_name)
+        if image_list:
+            pic_num = 0
+            for pic in image_list:
+                url = pic.get("url")
+                if not url:
+                    continue
+                content = await self.xhs_client.get_note_media(url)
+                await safe_sleep(1.0)
+                if content is None:
+                    continue
+                extension_file_name = f"{pic_num}.jpg"
+                pic_num += 1
+                await xhs_store.update_xhs_note_image(note_id, content, extension_file_name)
 
         # 处理视频
         videos = xhs_store.get_video_url_arr(note_detail)

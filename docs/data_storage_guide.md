@@ -59,6 +59,20 @@ uv run main.py --platform xhs --lt cookie --type search --save_data_option csv
 uv run main.py --platform xhs --lt cookie --type search --save_data_option json
 ```
 
+#### 关系型数据库字段升级说明（Twitter）
+
+- 新增抓取字段：`twitter_tweet.urls`、`twitter_tweet.user_mentions`、`twitter_tweet.media_detail`
+- 程序在执行 `--init_db` 时会自动做轻量兼容升级（若缺列则自动 `ALTER TABLE ADD COLUMN`）
+- 如果你使用的是非常旧的数据库快照，仍建议先备份数据库后再执行一次：
+
+```shell
+uv run main.py --init_db sqlite
+# 或
+uv run main.py --init_db mysql
+# 或
+uv run main.py --init_db postgres
+```
+
 #### 详细文档
 
 - **Excel 导出详细指南**：查看 [Excel 导出指南](excel_export_guide.md)
