@@ -45,7 +45,12 @@ def parse_cookie_header(cookie_header: str) -> dict[str, str]:
 
 
 def has_twitter_auth_material(cookie_header: str = "") -> bool:
-    merged_cookie = (cookie_header or "").strip() or getattr(config, "TWITTER_COOKIE", "").strip()
+    explicit_cookie = (cookie_header or "").strip()
+    if explicit_cookie:
+        cookie_map = parse_cookie_header(explicit_cookie)
+        return bool(cookie_map.get("auth_token", "").strip() and cookie_map.get("ct0", "").strip())
+
+    merged_cookie = getattr(config, "TWITTER_COOKIE", "").strip()
     cookie_map = parse_cookie_header(merged_cookie)
     auth_token = getattr(config, "TWITTER_AUTH_TOKEN", "").strip() or cookie_map.get("auth_token", "").strip()
     ct0 = getattr(config, "TWITTER_CT0", "").strip() or cookie_map.get("ct0", "").strip()

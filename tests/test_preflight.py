@@ -24,6 +24,20 @@ def test_has_twitter_auth_material_requires_both_fields():
     assert preflight.has_twitter_auth_material(cookie) is False
 
 
+def test_has_twitter_auth_material_explicit_cookie_does_not_fallback_to_env(monkeypatch):
+    monkeypatch.setattr(preflight.config, "TWITTER_AUTH_TOKEN", "env-auth", raising=False)
+    monkeypatch.setattr(preflight.config, "TWITTER_CT0", "env-ct0", raising=False)
+    cookie = "foo=bar; auth_token=token123"
+    assert preflight.has_twitter_auth_material(cookie) is False
+
+
+def test_has_twitter_auth_material_fallback_to_env_when_cookie_empty(monkeypatch):
+    monkeypatch.setattr(preflight.config, "TWITTER_AUTH_TOKEN", "env-auth", raising=False)
+    monkeypatch.setattr(preflight.config, "TWITTER_CT0", "env-ct0", raising=False)
+    monkeypatch.setattr(preflight.config, "TWITTER_COOKIE", "", raising=False)
+    assert preflight.has_twitter_auth_material("") is True
+
+
 def test_preflight_for_platform_validates_twitter_auth(monkeypatch):
     monkeypatch.setattr(preflight, "check_energy_service_reachable", lambda timeout_sec=2.0: (True, "ok"))
     ok, message = preflight.preflight_for_platform("x", "auth_token=1; ct0=2")

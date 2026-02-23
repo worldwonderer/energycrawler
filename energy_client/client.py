@@ -9,6 +9,7 @@ import grpc
 import time
 from typing import List, Dict, Optional
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 # Import generated protobuf modules
 from . import browser_pb2
@@ -117,6 +118,7 @@ class BrowserClient:
         Returns:
             HTTP status code
         """
+        self._validate_navigate_url(url)
         request = browser_pb2.NavigateRequest(
             browser_id=browser_id,
             url=url,
@@ -126,6 +128,14 @@ class BrowserClient:
         if not response.success:
             raise Exception(f"Navigation failed: {response.error}")
         return response.status_code
+
+    @staticmethod
+    def _validate_navigate_url(url: str) -> None:
+        parsed = urlparse((url or "").strip())
+        is_http = parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+        is_file = parsed.scheme == "file" and bool(parsed.path)
+        if not (is_http or is_file):
+            raise ValueError(f"Invalid URL for navigation: {url}")
 
     def get_cookies(self, browser_id: str, url: str) -> List[Cookie]:
         """

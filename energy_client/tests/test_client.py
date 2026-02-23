@@ -176,6 +176,28 @@ class TestBrowserClient:
 
         assert "Connection refused" in str(exc_info.value)
 
+    def test_navigate_invalid_url_raises_before_rpc(self, browser_client, mock_browser_stub):
+        """Test invalid URL validation on client side"""
+        browser_client.connect()
+
+        with pytest.raises(ValueError):
+            browser_client.navigate('test-browser', 'not-a-valid-url')
+
+        mock_browser_stub.Navigate.assert_not_called()
+
+    def test_navigate_file_url_is_allowed(self, browser_client, mock_browser_stub):
+        """Test local file:// URL remains supported (QR flow compatibility)"""
+        mock_response = MagicMock()
+        mock_response.success = True
+        mock_response.status_code = 200
+        mock_browser_stub.Navigate.return_value = mock_response
+
+        browser_client.connect()
+        status = browser_client.navigate('test-browser', 'file:///tmp/test_qr.html')
+
+        assert status == 200
+        mock_browser_stub.Navigate.assert_called_once()
+
     def test_get_cookies_success(self, browser_client, mock_browser_stub, sample_cookies):
         """Test getting cookies successfully"""
         # Create protobuf cookies
