@@ -172,6 +172,57 @@ def test_build_command_supports_safety_limit_overrides():
     assert "--crawl_sleep_sec" in cmd and "12.5" in cmd
 
 
+def test_build_command_applies_safety_profile_defaults_when_limits_missing():
+    manager = CrawlerManager(max_workers=1, enable_output_reader=False)
+    request = CrawlerStartRequest(
+        platform="xhs",
+        crawler_type="search",
+        login_type="cookie",
+        keywords="新能源",
+        save_option="json",
+        safety_profile="balanced",
+    )
+
+    cmd = manager._build_command(request)
+    assert "--max_notes_count" in cmd and "10" in cmd
+    assert "--crawl_sleep_sec" in cmd and "8.0" in cmd
+
+
+def test_build_command_safety_profile_keeps_explicit_limits():
+    manager = CrawlerManager(max_workers=1, enable_output_reader=False)
+    request = CrawlerStartRequest(
+        platform="x",
+        crawler_type="search",
+        login_type="cookie",
+        keywords="open source",
+        save_option="json",
+        safety_profile="aggressive",
+        max_notes_count=12,
+    )
+
+    cmd = manager._build_command(request)
+    assert "--max_notes_count" in cmd and "12" in cmd
+    assert "--crawl_sleep_sec" in cmd and "6.0" in cmd
+
+
+def test_build_command_safety_profile_respects_runtime_hard_limits(monkeypatch):
+    monkeypatch.setenv("CRAWLER_HARD_MAX_NOTES_COUNT", "9")
+    monkeypatch.setenv("CRAWLER_MIN_SLEEP_SEC", "7.0")
+    manager = CrawlerManager(max_workers=1, enable_output_reader=False)
+    request = CrawlerStartRequest(
+        platform="xhs",
+        crawler_type="search",
+        login_type="cookie",
+        keywords="test",
+        save_option="json",
+        safety_profile="aggressive",
+    )
+
+    cmd = manager._build_command(request)
+    assert "--max_notes_count" in cmd and "9" in cmd
+    assert "--crawl_sleep_sec" in cmd and "7.0" in cmd
+
+
 @pytest.mark.asyncio
 async def test_start_rejects_when_preflight_fails(monkeypatch):
     monkeypatch.setattr(crawler_manager_module, "preflight_for_platform", lambda *_args, **_kwargs: (False, "energy unreachable"))

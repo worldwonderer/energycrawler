@@ -26,7 +26,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Deque, List, Optional
 
-from ..schemas import CrawlerStartRequest, LogEntry
+from ..schemas import CrawlerStartRequest, LogEntry, SafetyProfileEnum
 from tools.cookiecloud_sync import sync_cookiecloud_login_state
 from tools import utils
 from tools.preflight import build_preflight_failure_hint, preflight_for_platform
@@ -34,6 +34,12 @@ from tools.preflight import build_preflight_failure_hint, preflight_for_platform
 
 class CrawlerManager:
     """Simplified crawler cluster manager (queue + worker pool)."""
+
+    _SAFETY_PROFILE_DEFAULTS = {
+        SafetyProfileEnum.SAFE: {"max_notes_count": 5, "crawl_sleep_sec": 10.0},
+        SafetyProfileEnum.BALANCED: {"max_notes_count": 10, "crawl_sleep_sec": 8.0},
+        SafetyProfileEnum.AGGRESSIVE: {"max_notes_count": 20, "crawl_sleep_sec": 6.0},
+    }
 
     def __init__(
         self,
@@ -374,15 +380,64 @@ class CrawlerManager:
         if config.cookies:
             cmd.extend(["--cookies", config.cookies])
 
-        if config.max_notes_count is not None:
-            cmd.extend(["--max_notes_count", str(config.max_notes_count)])
+        resolved_limits = self._resolve_safety_limits(config)
 
-        if config.crawl_sleep_sec is not None:
-            cmd.extend(["--crawl_sleep_sec", str(config.crawl_sleep_sec)])
+        if resolved_limits["max_notes_count"] is not None:
+            cmd.extend(["--max_notes_count", str(resolved_limits["max_notes_count"])])
+
+        if resolved_limits["crawl_sleep_sec"] is not None:
+            cmd.extend(["--crawl_sleep_sec", str(resolved_limits["crawl_sleep_sec"])])
 
         cmd.extend(["--headless", "true" if config.headless else "false"])
 
         return cmd
+
+    def _resolve_safety_limits(self, config: CrawlerStartRequest) -> dict:
+        max_notes_count = config.max_notes_count
+        crawl_sleep_sec = config.crawl_sleep_sec
+
+        if config.safety_profile is None:
+            return {
+                "max_notes_count": max_notes_count,
+                "crawl_sleep_sec": crawl_sleep_sec,
+            }
+
+        defaults = self._resolve_profile_defaults(config.safety_profile)
+        if max_notes_count is None:
+            max_notes_count = defaults["max_notes_count"]
+        if crawl_sleep_sec is None:
+            crawl_sleep_sec = defaults["crawl_sleep_sec"]
+
+        return {
+            "max_notes_count": max_notes_count,
+            "crawl_sleep_sec": crawl_sleep_sec,
+        }
+
+    def _resolve_profile_defaults(self, profile: SafetyProfileEnum) -> dict:
+        hard_max_notes_count = self._read_int_env("CRAWLER_HARD_MAX_NOTES_COUNT", default=20, minimum=1)
+        min_sleep_sec = self._read_float_env("CRAWLER_MIN_SLEEP_SEC", default=6.0, minimum=0.1)
+
+        base = self._SAFETY_PROFILE_DEFAULTS.get(profile, self._SAFETY_PROFILE_DEFAULTS[SafetyProfileEnum.SAFE])
+        return {
+            "max_notes_count": min(max(1, int(base["max_notes_count"])), hard_max_notes_count),
+            "crawl_sleep_sec": max(float(base["crawl_sleep_sec"]), min_sleep_sec),
+        }
+
+    def _read_int_env(self, key: str, *, default: int, minimum: int) -> int:
+        raw_value = os.getenv(key, str(default))
+        try:
+            candidate = int(raw_value)
+        except ValueError:
+            candidate = default
+        return max(minimum, candidate)
+
+    def _read_float_env(self, key: str, *, default: float, minimum: float) -> float:
+        raw_value = os.getenv(key, str(default))
+        try:
+            candidate = float(raw_value)
+        except ValueError:
+            candidate = default
+        return max(minimum, candidate)
 
     async def _read_output(self, worker_id: int, process: subprocess.Popen, task_id: str):
         """Asynchronously read worker process output."""

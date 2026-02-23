@@ -22,20 +22,24 @@ Start command: uvicorn api.main:app --port 8080 --reload
 Or: python -m api.main
 """
 import asyncio
+from datetime import datetime, timezone
 from pathlib import Path
 import subprocess
 
+import config as runtime_config
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from tools.preflight import check_energy_service_reachable, parse_cookie_header
 
 from config.runtime_snapshot import API_CONFIG_RESPONSE_EXAMPLE, build_public_runtime_config
 
 from .routers import crawler_router, data_router, websocket_router, auth_router
 from .response import ApiError, error_response, status_to_error_code, success_response
-from .schemas import SaveDataOptionEnum
+from .schemas import SaveDataOptionEnum, SafetyProfileEnum
+from .services import crawler_manager
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ENV_CHECK_TIMEOUT_SECONDS = 30.0
@@ -151,6 +155,43 @@ def _truncate_output(value: str) -> str:
     return value[:ENV_CHECK_OUTPUT_LIMIT]
 
 
+def _build_login_health_snapshot() -> dict[str, dict[str, object]]:
+    xhs_cookie_header = (getattr(runtime_config, "COOKIES", "") or "").strip()
+    xhs_cookie_map = parse_cookie_header(xhs_cookie_header)
+    xhs_ok = bool(xhs_cookie_map.get("a1", "").strip())
+
+    twitter_cookie_header = (getattr(runtime_config, "TWITTER_COOKIE", "") or "").strip()
+    twitter_cookie_map = parse_cookie_header(twitter_cookie_header)
+    twitter_auth_token = (
+        (getattr(runtime_config, "TWITTER_AUTH_TOKEN", "") or "").strip()
+        or twitter_cookie_map.get("auth_token", "").strip()
+    )
+    twitter_ct0 = (
+        (getattr(runtime_config, "TWITTER_CT0", "") or "").strip()
+        or twitter_cookie_map.get("ct0", "").strip()
+    )
+    twitter_ok = bool(twitter_auth_token and twitter_ct0)
+
+    return {
+        "xhs": {
+            "ok": xhs_ok,
+            "message": (
+                "env COOKIES present (a1 found; supports QR login output)"
+                if xhs_ok
+                else "env COOKIES missing a1"
+            ),
+        },
+        "x": {
+            "ok": twitter_ok,
+            "message": (
+                "env has auth_token + ct0"
+                if twitter_ok
+                else "env missing auth_token and/or ct0"
+            ),
+        },
+    }
+
+
 @app.get("/api/env/check")
 async def check_environment():
     """Check if EnergyCrawler environment is configured correctly"""
@@ -211,6 +252,42 @@ async def check_environment():
         ) from e
 
 
+@app.get("/api/health/runtime")
+async def runtime_health_snapshot():
+    """Get runtime health snapshot for energy/login/crawler queue."""
+    energy_ok, energy_message = check_energy_service_reachable()
+    login_snapshot = _build_login_health_snapshot()
+    cluster_snapshot = crawler_manager.get_cluster_status()
+
+    queue_snapshot = {
+        "healthy": cluster_snapshot.get("status") != "error",
+        "status": cluster_snapshot.get("status"),
+        "running_workers": cluster_snapshot.get("running_workers", 0),
+        "total_workers": cluster_snapshot.get("total_workers", 0),
+        "queued_tasks": cluster_snapshot.get("queued_tasks", 0),
+        "max_queue_size": cluster_snapshot.get("max_queue_size", 0),
+        "active_task_ids": cluster_snapshot.get("active_task_ids", []),
+        "pending_task_ids": cluster_snapshot.get("pending_task_ids", []),
+    }
+    login_ok = all(bool(item.get("ok")) for item in login_snapshot.values())
+    overall_healthy = bool(energy_ok and login_ok and queue_snapshot["healthy"])
+
+    return success_response(
+        {
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+            "overall_healthy": overall_healthy,
+            "overall_status": "healthy" if overall_healthy else "degraded",
+            "energy": {
+                "ok": energy_ok,
+                "message": energy_message,
+            },
+            "login": login_snapshot,
+            "crawler_queue": queue_snapshot,
+        },
+        message="Runtime health snapshot",
+    )
+
+
 @app.get("/api/config/platforms")
 async def get_platforms():
     """Get list of supported platforms"""
@@ -266,6 +343,11 @@ async def get_config_options():
         "save_options": [
             {"value": option.value, "label": SAVE_OPTION_LABELS[option.value]}
             for option in SaveDataOptionEnum
+        ],
+        "safety_profiles": [
+            {"value": SafetyProfileEnum.SAFE.value, "label": "Safe"},
+            {"value": SafetyProfileEnum.BALANCED.value, "label": "Balanced"},
+            {"value": SafetyProfileEnum.AGGRESSIVE.value, "label": "Aggressive"},
         ],
     }, message="Config options")
 

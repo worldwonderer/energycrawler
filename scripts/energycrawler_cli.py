@@ -15,6 +15,9 @@ import sqlite3
 import subprocess
 import sys
 from typing import Any, Sequence
+import urllib.error
+import urllib.parse
+import urllib.request
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -25,6 +28,8 @@ DEFAULT_PORT = 50051
 DEFAULT_TIMEOUT = 8.0
 DEFAULT_ENSURE_RETRIES = 3
 DEFAULT_ENSURE_SLEEP = 2.0
+DEFAULT_API_BASE = os.getenv("ENERGYCRAWLER_API_BASE", "http://127.0.0.1:8080")
+DEFAULT_API_TIMEOUT = 15.0
 
 RUNTIME_CONFIG_KEYS = [
     "PLATFORM",
@@ -404,6 +409,185 @@ def _truncate_text(value: str, limit: int = 600) -> str:
     return f"{raw[:limit]}... (truncated)"
 
 
+def _normalize_api_base(api_base: str) -> str:
+    base = (api_base or "").strip() or DEFAULT_API_BASE
+    base = base.rstrip("/")
+    if base.endswith("/api"):
+        base = base[:-4]
+    return base
+
+
+def _build_api_url(api_base: str, endpoint: str, params: dict[str, Any] | None = None) -> str:
+    base = _normalize_api_base(api_base)
+    path = endpoint if endpoint.startswith("/") else f"/{endpoint}"
+    if not params:
+        return f"{base}{path}"
+
+    query_items: dict[str, str] = {}
+    for key, value in params.items():
+        if value is None:
+            continue
+        if isinstance(value, bool):
+            query_items[key] = "true" if value else "false"
+        else:
+            query_items[key] = str(value)
+
+    if not query_items:
+        return f"{base}{path}"
+    return f"{base}{path}?{urllib.parse.urlencode(query_items)}"
+
+
+def _api_fetch(url: str, *, timeout: float = DEFAULT_API_TIMEOUT) -> tuple[int, bytes, dict[str, str]]:
+    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            status = int(getattr(response, "status", response.getcode()))
+            headers = {str(key).lower(): str(value) for key, value in response.headers.items()}
+            return status, response.read(), headers
+    except urllib.error.HTTPError as exc:
+        status = int(getattr(exc, "code", 500))
+        headers = {str(key).lower(): str(value) for key, value in (exc.headers.items() if exc.headers else [])}
+        return status, exc.read(), headers
+    except urllib.error.URLError as exc:
+        reason = getattr(exc, "reason", exc)
+        raise ConnectionError(str(reason)) from exc
+
+
+def _parse_json_bytes(raw: bytes) -> dict[str, Any] | None:
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw.decode("utf-8", errors="replace"))
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _extract_api_error_message(payload: dict[str, Any] | None, fallback: str) -> str:
+    if payload and isinstance(payload, dict):
+        error = payload.get("error")
+        if isinstance(error, dict):
+            message = str(error.get("message", "")).strip()
+            if message:
+                return message
+        detail = payload.get("detail")
+        if isinstance(detail, str) and detail.strip():
+            return detail.strip()
+        message = payload.get("message")
+        if isinstance(message, str) and message.strip():
+            return message.strip()
+    return fallback
+
+
+def _filename_from_content_disposition(value: str) -> str | None:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    for part in raw.split(";"):
+        item = part.strip()
+        if item.lower().startswith("filename="):
+            filename = item.split("=", 1)[1].strip().strip('"').strip("'")
+            return filename or None
+    return None
+
+
+def _resolve_download_output_path(output: str | None, filename: str) -> Path:
+    if not output:
+        return Path(filename)
+
+    candidate = Path(output).expanduser()
+    if candidate.exists() and candidate.is_dir():
+        return candidate / filename
+    return candidate
+
+
+def _print_latest_preview_summary(payload: dict[str, Any]) -> None:
+    data = payload.get("data", {}) if isinstance(payload, dict) else {}
+    file_info = data.get("file", {}) if isinstance(data, dict) else {}
+    name = file_info.get("name", "unknown")
+    file_type = file_info.get("type", "unknown")
+    total = data.get("total")
+    if total is None:
+        total = file_info.get("record_count", "unknown")
+    print(f"[data latest] file={name}")
+    print(f"[data latest] type={file_type}")
+    print(f"[data latest] records={total}")
+
+
+def _data_latest_cmd(args: argparse.Namespace) -> int:
+    if args.limit < 1:
+        print("[data latest] --limit must be >= 1", file=sys.stderr)
+        return 2
+
+    query: dict[str, Any] = {
+        "platform": args.platform,
+        "file_type": args.file_type,
+    }
+
+    try:
+        if args.download:
+            url = _build_api_url(args.api_base, "/api/data/latest/download", query)
+            status, body, headers = _api_fetch(url)
+            if status != 200:
+                payload = _parse_json_bytes(body)
+                message = _extract_api_error_message(payload, f"HTTP {status}")
+                if status == 404:
+                    print(f"[data latest] No latest file found: {message}", file=sys.stderr)
+                    return 4
+                print(f"[data latest] Download failed (HTTP {status}): {message}", file=sys.stderr)
+                return 1
+
+            file_type = str(args.file_type or "data").lstrip(".")
+            filename = _filename_from_content_disposition(headers.get("content-disposition", "")) or f"latest.{file_type}"
+            target = _resolve_download_output_path(args.output, filename)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(body)
+
+            result_payload = {
+                "success": True,
+                "download": {
+                    "path": str(target),
+                    "filename": target.name,
+                    "bytes": len(body),
+                    "source": url,
+                },
+            }
+            if args.json:
+                print(json.dumps(result_payload, ensure_ascii=False, indent=2))
+            else:
+                print(f"[data latest] downloaded: {target} ({len(body)} bytes)")
+            return 0
+
+        preview_query = {
+            **query,
+            "preview": True,
+            "limit": args.limit,
+        }
+        url = _build_api_url(args.api_base, "/api/data/latest", preview_query)
+        status, body, _headers = _api_fetch(url)
+        payload = _parse_json_bytes(body)
+        if status != 200:
+            message = _extract_api_error_message(payload, f"HTTP {status}")
+            if status == 404:
+                print(f"[data latest] No latest file found: {message}", file=sys.stderr)
+                return 4
+            print(f"[data latest] Preview failed (HTTP {status}): {message}", file=sys.stderr)
+            return 1
+
+        if payload is None:
+            print("[data latest] Invalid JSON response from API", file=sys.stderr)
+            return 1
+
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            _print_latest_preview_summary(payload)
+        return 0
+    except ConnectionError as exc:
+        print(f"[data latest] API unreachable: {exc}", file=sys.stderr)
+        return 2
+
+
 def _run_doctor_checks(
     *,
     host: str,
@@ -729,6 +913,8 @@ def _build_parser() -> argparse.ArgumentParser:
             "  uv run energycrawler init\n"
             "  uv run energycrawler setup --storage-check\n"
             "  uv run energycrawler config show --json\n"
+            "  uv run energycrawler data latest --platform xhs\n"
+            "  uv run energycrawler data latest --download --platform x --output ./latest.json\n"
             "  uv run energycrawler energy ensure\n"
             "  uv run energycrawler auth status --json\n"
             "  uv run energycrawler crawl -- --platform xhs --type search --keywords 新能源\n"
@@ -761,6 +947,28 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Arguments forwarded to scripts/energy_service_cli.py",
     )
     energy_parser.set_defaults(handler=_energy_cmd)
+
+    data_parser = subparsers.add_parser("data", help="Data API helper commands")
+    data_subparsers = data_parser.add_subparsers(dest="data_command", required=True)
+    data_latest_parser = data_subparsers.add_parser(
+        "latest",
+        help="Preview or download latest exported file via API",
+    )
+    data_latest_parser.add_argument(
+        "--api-base",
+        default=DEFAULT_API_BASE,
+        help="API base URL (default: ENERGYCRAWLER_API_BASE or http://127.0.0.1:8080)",
+    )
+    data_latest_parser.add_argument("--platform", help="Optional platform filter, e.g. xhs/x/twitter")
+    data_latest_parser.add_argument("--file-type", help="Optional file type filter, e.g. json/csv/xlsx")
+    data_latest_parser.add_argument("--limit", type=int, default=100, help="Preview limit (default: 100)")
+    data_latest_parser.add_argument("--download", action="store_true", help="Download latest file instead of preview")
+    data_latest_parser.add_argument(
+        "--output",
+        help="Output path for downloaded file (file path or existing directory)",
+    )
+    data_latest_parser.add_argument("--json", action="store_true", help="Print JSON output")
+    data_latest_parser.set_defaults(handler=_data_latest_cmd)
 
     doctor_parser = subparsers.add_parser("doctor", help="Run quick environment diagnostics")
     _add_doctor_arguments(doctor_parser)

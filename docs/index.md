@@ -58,6 +58,10 @@ uv run energycrawler crawl -- --help
 # 一键环境体检
 uv run energycrawler doctor
 
+# 通过 API 快速预览/下载最新导出数据
+uv run energycrawler data latest --platform xhs
+uv run energycrawler data latest --download --platform x --output ./downloads/
+
 # 严格清理报告（含旧命令/绝对路径/尾随空格）
 uv run energycrawler cleanup-report --json
 ```
@@ -72,12 +76,40 @@ uv run uvicorn api.main:app --port 8080 --reload
 
 ### API 食谱（复制即用）
 
+查看运行态健康快照（Energy / 登录态 / 队列）：
+
+```bash
+curl -s http://localhost:8080/api/health/runtime | jq .
+```
+
 下载“最新导出文件”：
 
 ```bash
 LATEST_FILE=$(curl -s http://localhost:8080/api/data/files | jq -r '.data.files[0].path')
 curl -s "http://localhost:8080/api/data/files/${LATEST_FILE}?preview=true&limit=20" | jq .
 curl -L "http://localhost:8080/api/data/download/${LATEST_FILE}" -o "./latest-$(basename "$LATEST_FILE")"
+```
+
+直接调用 latest 接口：
+
+```bash
+curl -s "http://localhost:8080/api/data/latest?platform=xhs&preview=true&limit=20" | jq .
+curl -L "http://localhost:8080/api/data/latest/download?platform=xhs" -o ./latest-xhs.dat
+```
+
+带 safety_profile 的启动示例：
+
+```bash
+curl -s -X POST http://localhost:8080/api/crawler/start \
+  -H "Content-Type: application/json" \
+  -d '{
+    "platform":"xhs",
+    "crawler_type":"search",
+    "login_type":"cookie",
+    "keywords":"新能源",
+    "save_option":"json",
+    "safety_profile":"balanced"
+  }' | jq .
 ```
 
 WebSocket 实时日志/状态订阅（浏览器控制台）：

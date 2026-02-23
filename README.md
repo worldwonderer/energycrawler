@@ -300,6 +300,16 @@ uv run energycrawler crawl -- --platform x --lt cookie --type creator --creator_
 uv run energycrawler crawl -- --help
 ```
 
+快速查看/下载最新导出数据（通过 API）：
+
+```bash
+# 预览最新文件摘要
+uv run energycrawler data latest --platform xhs
+
+# 下载最新文件到指定目录
+uv run energycrawler data latest --download --platform x --output ./downloads/
+```
+
 一键体检（服务连通 + 登录态就绪）：
 
 ```bash
@@ -335,15 +345,21 @@ uv run uvicorn api.main:app --port 8080 --reload
 - `GET /api/config/platforms`：查看支持的平台列表（config show）
 - `GET /api/config/options`：查看可选登录类型/抓取模式/存储方式（config show）
 - `GET /api/data/files`：按更新时间倒序列出导出文件
+- `GET /api/data/latest`：获取最新文件（默认预览）
+- `GET /api/data/latest/download`：下载最新文件
 - `GET /api/data/files/{file_path}?preview=true&limit=20`：预览导出文件前 N 条
 - `GET /api/data/download/{file_path}`：下载指定导出文件
+- `GET /api/health/runtime`：查看运行态健康快照（Energy / 登录态 / 队列）
 - `GET /api/ws/logs`：实时日志 WebSocket（`ws://localhost:8080/api/ws/logs`）
 - `GET /api/ws/status`：实时状态 WebSocket（`ws://localhost:8080/api/ws/status`）
 
 `POST /api/crawler/start` 支持额外安全参数：
 
+- `safety_profile`：安全预设（`safe` / `balanced` / `aggressive`）
 - `max_notes_count`：单任务最大抓取数量
 - `crawl_sleep_sec`：请求间隔秒数
+
+说明：当 `safety_profile` 与 `max_notes_count` / `crawl_sleep_sec` 同时提供时，显式参数优先。
 
 任务入队前会执行预检：
 
@@ -370,6 +386,22 @@ curl -s "http://localhost:8080/api/data/files/${LATEST_FILE}?preview=true&limit=
 
 # 下载完整文件到当前目录
 curl -L "http://localhost:8080/api/data/download/${LATEST_FILE}" -o "./latest-$(basename "$LATEST_FILE")"
+```
+
+直接使用 latest 接口（无需先列出 files）：
+
+```bash
+# 预览最新 20 条
+curl -s "http://localhost:8080/api/data/latest?platform=xhs&preview=true&limit=20" | jq .
+
+# 下载最新文件
+curl -L "http://localhost:8080/api/data/latest/download?platform=xhs" -o "./latest-xhs.dat"
+```
+
+查看运行态健康快照：
+
+```bash
+curl -s http://localhost:8080/api/health/runtime | jq .
 ```
 
 WebSocket 订阅实时日志/状态（浏览器控制台可直接运行）：

@@ -50,6 +50,13 @@ class SaveDataOptionEnum(str, Enum):
     POSTGRES = "postgres"
 
 
+class SafetyProfileEnum(str, Enum):
+    """Safety profile presets for API-level rate limits."""
+    SAFE = "safe"
+    BALANCED = "balanced"
+    AGGRESSIVE = "aggressive"
+
+
 class CrawlerStartRequest(BaseModel):
     """Crawler start request"""
     platform: PlatformEnum
@@ -64,6 +71,14 @@ class CrawlerStartRequest(BaseModel):
     save_option: SaveDataOptionEnum = SaveDataOptionEnum.JSON
     cookies: str = ""
     headless: bool = False
+    safety_profile: Optional[SafetyProfileEnum] = Field(
+        default=None,
+        description=(
+            "Optional safety preset for default API throttling. "
+            "When provided, crawler_manager fills missing max_notes_count/crawl_sleep_sec "
+            "from profile defaults."
+        ),
+    )
     max_notes_count: Optional[int] = Field(default=None, ge=1, le=200)
     crawl_sleep_sec: Optional[float] = Field(default=None, ge=0.1, le=120.0)
 
