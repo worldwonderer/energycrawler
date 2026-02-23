@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import sys
 import time
 from typing import Any, Dict
+import uuid
 
 import httpx
 
@@ -47,6 +49,14 @@ def _open_login_page(host: str, port: int, browser_id: str, url: str, headless: 
         client.disconnect()
 
 
+def _resolve_browser_id(raw_browser_id: str) -> str:
+    browser_id = (raw_browser_id or "").strip()
+    if browser_id:
+        return browser_id
+    prefix = (os.getenv("ENERGY_BROWSER_ID_PREFIX", "energycrawler") or "energycrawler").strip()
+    return f"{prefix}_xhs_auth_{os.getpid()}_{uuid.uuid4().hex[:8]}"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Open XHS login page in Energy and sync cookies after manual login"
@@ -54,7 +64,11 @@ def main() -> None:
     parser.add_argument("--api-base", default="http://localhost:8080")
     parser.add_argument("--energy-host", default="localhost")
     parser.add_argument("--energy-port", type=int, default=50051)
-    parser.add_argument("--browser-id", default="manual_login_xhs")
+    parser.add_argument(
+        "--browser-id",
+        default="",
+        help="Target Energy browser id. Leave empty to auto-generate an isolated id.",
+    )
     parser.add_argument("--login-url", default="https://www.xiaohongshu.com")
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--poll-interval", type=float, default=2.0)
@@ -62,21 +76,25 @@ def main() -> None:
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
+    browser_id = _resolve_browser_id(args.browser_id)
+    if not (args.browser_id or "").strip():
+        print(f"[energy] auto-generated browser_id={browser_id}")
+
     status_code = _open_login_page(
         host=args.energy_host,
         port=args.energy_port,
-        browser_id=args.browser_id,
+        browser_id=browser_id,
         url=args.login_url,
         headless=args.headless,
     )
     print(
-        f"[energy] opened login page in browser_id={args.browser_id} "
+        f"[energy] opened login page in browser_id={browser_id} "
         f"(status={status_code}) url={args.login_url}"
     )
     print("[hint] 请在 Energy 窗口完成小红书扫码/确认登录，脚本会自动轮询并同步 COOKIES。")
 
     sync_url = f"{args.api_base.rstrip('/')}/api/auth/xhs/energy/sync"
-    payload = {"browser_id": args.browser_id, "verify_login": True}
+    payload = {"browser_id": browser_id, "verify_login": True}
 
     started = time.monotonic()
     last_error = ""
@@ -106,7 +124,7 @@ def main() -> None:
         )
         print(
             "[done] verify with: uv run energycrawler auth status "
-            f"--xhs-browser-id {args.browser_id} --skip-browser-check"
+            f"--xhs-browser-id {browser_id} --skip-browser-check"
         )
 
 

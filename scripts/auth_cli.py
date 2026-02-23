@@ -129,8 +129,6 @@ def _xhs_open_login_cmd(args: argparse.Namespace) -> int:
         args.energy_host,
         "--energy-port",
         str(args.energy_port),
-        "--browser-id",
-        args.browser_id,
         "--login-url",
         args.login_url,
         "--poll-interval",
@@ -138,6 +136,8 @@ def _xhs_open_login_cmd(args: argparse.Namespace) -> int:
         "--timeout-sec",
         str(args.timeout_sec),
     ]
+    if args.browser_id:
+        cmd_args.extend(["--browser-id", args.browser_id])
     if args.headless:
         cmd_args.append("--headless")
     if args.json:
@@ -212,7 +212,11 @@ def _build_parser() -> argparse.ArgumentParser:
     open_login_parser.add_argument("--api-base", default="http://localhost:8080")
     open_login_parser.add_argument("--energy-host", default="localhost")
     open_login_parser.add_argument("--energy-port", type=int, default=50051)
-    open_login_parser.add_argument("--browser-id", default="manual_login_xhs")
+    open_login_parser.add_argument(
+        "--browser-id",
+        default="",
+        help="Target browser id (empty = auto-generate isolated id)",
+    )
     open_login_parser.add_argument("--login-url", default="https://www.xiaohongshu.com")
     open_login_parser.add_argument("--headless", action="store_true")
     open_login_parser.add_argument("--poll-interval", type=float, default=2.0)

@@ -165,21 +165,23 @@ uv run energycrawler auth status --host localhost --port 50051
 推荐登录流（直接打开小红书登录页，在 Energy 内完成扫码/确认，再自动同步）：
 
 ```bash
-uv run energycrawler auth xhs-open-login --api-base http://localhost:8080 --browser-id manual_login_xhs
+uv run energycrawler auth xhs-open-login --api-base http://localhost:8080
 ```
+
+> 不传 `--browser-id` 时会自动生成隔离会话 ID，并在输出中打印。
 
 如果你已经在 Energy 浏览器里登录了 XHS，也可直接同步该会话（无需再打开登录页）：
 
 ```bash
 curl -s -X POST http://localhost:8080/api/auth/xhs/energy/sync \
   -H 'Content-Type: application/json' \
-  -d '{"browser_id":"manual_login_xhs","verify_login":true}'
+  -d '{"browser_id":"<browser_id_from_open_login_output>","verify_login":true}'
 ```
 
 统一入口（等价命令）：
 
 ```bash
-uv run energycrawler auth xhs-sync --api-base http://localhost:8080 --browser-id manual_login_xhs
+uv run energycrawler auth xhs-sync --api-base http://localhost:8080 --browser-id <browser_id_from_open_login_output>
 ```
 
 XHS QR API 登录（备用方案）：
