@@ -82,6 +82,21 @@ uv run energycrawler energy check --host localhost --port 50051
 配置文件：`config/base_config.py`
 环境变量文件：项目根目录 `.env`（会自动加载）
 
+建议用分层方式看配置：
+
+```bash
+# 核心变量（新手只看这个）
+uv run energycrawler config env --mode core
+
+# 进阶变量（按需调整）
+uv run energycrawler config env --mode advanced
+```
+
+模板建议：
+
+- 新手：`.env.quickstart.example`
+- 进阶：`.env.example`
+
 常用项：
 
 - `PLATFORM = "xhs" | "x"`
@@ -245,7 +260,11 @@ uv run energycrawler init --force --check
 uv run energycrawler config show --simple
 
 # 完整配置
-uv run energycrawler config show --json
+uv run energycrawler config show --no-simple --json
+
+# 环境变量分层查看
+uv run energycrawler config env --mode core
+uv run energycrawler config env --mode advanced
 ```
 
 环境体检（doctor）：

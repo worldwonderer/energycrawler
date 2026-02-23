@@ -66,6 +66,73 @@ CORE_RUNTIME_CONFIG_KEYS = [
     "ENERGY_SERVICE_ADDRESS",
 ]
 SENSITIVE_RUNTIME_KEYS = {"COOKIES", "TWITTER_COOKIE", "TWITTER_AUTH_TOKEN", "TWITTER_CT0"}
+CORE_ENV_KEYS = [
+    "PLATFORM",
+    "CRAWLER_TYPE",
+    "LOGIN_TYPE",
+    "KEYWORDS",
+    "HEADLESS",
+    "SAVE_DATA_OPTION",
+    "ENERGY_SERVICE_ADDRESS",
+    "CRAWLER_MAX_NOTES_COUNT",
+    "MAX_CONCURRENCY_NUM",
+    "CRAWLER_MAX_SLEEP_SEC",
+    "COOKIES",
+    "TWITTER_AUTH_TOKEN",
+    "TWITTER_CT0",
+]
+ADVANCED_ENV_KEYS = [
+    "SAVE_DATA_PATH",
+    "TWITTER_COOKIE",
+    "COOKIECLOUD_ENABLED",
+    "COOKIECLOUD_FORCE_SYNC",
+    "COOKIECLOUD_SERVER",
+    "COOKIECLOUD_UUID",
+    "COOKIECLOUD_PASSWORD",
+    "COOKIECLOUD_TIMEOUT_SEC",
+    "AUTH_WATCHDOG_ENABLED",
+    "AUTH_WATCHDOG_MAX_RETRIES",
+    "AUTH_WATCHDOG_RETRY_INTERVAL_SEC",
+    "AUTH_WATCHDOG_FORCE_COOKIECLOUD_SYNC",
+    "AUTH_WATCHDOG_MAX_RUNTIME_RECOVERIES",
+    "CRAWLER_HARD_MAX_NOTES_COUNT",
+    "CRAWLER_HARD_MAX_CONCURRENCY",
+    "CRAWLER_MIN_SLEEP_SEC",
+    "CRAWLER_SLEEP_JITTER_SEC",
+    "CRAWLER_RETRY_BASE_DELAY_SEC",
+    "CRAWLER_RETRY_MAX_DELAY_SEC",
+    "XHS_SIGNATURE_CANARY_ENABLED",
+    "XHS_SIGNATURE_CANARY_TIMEOUT_SEC",
+    "XHS_SIGNATURE_CANARY_BASELINE_PATH",
+    "XHS_SIGNATURE_SESSION_TTL_SEC",
+    "XHS_SIGNATURE_FAILURE_THRESHOLD",
+    "MYSQL_DB_HOST",
+    "MYSQL_DB_PORT",
+    "MYSQL_DB_USER",
+    "MYSQL_DB_PWD",
+    "MYSQL_DB_NAME",
+    "MONGODB_HOST",
+    "MONGODB_PORT",
+    "MONGODB_USER",
+    "MONGODB_PWD",
+    "MONGODB_DB_NAME",
+    "POSTGRES_DB_HOST",
+    "POSTGRES_DB_PORT",
+    "POSTGRES_DB_USER",
+    "POSTGRES_DB_PWD",
+    "POSTGRES_DB_NAME",
+]
+SENSITIVE_ENV_KEYS = {
+    "COOKIES",
+    "TWITTER_COOKIE",
+    "TWITTER_AUTH_TOKEN",
+    "TWITTER_CT0",
+    "COOKIECLOUD_PASSWORD",
+    "COOKIECLOUD_UUID",
+    "MYSQL_DB_PWD",
+    "MONGODB_PWD",
+    "POSTGRES_DB_PWD",
+}
 
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -879,6 +946,62 @@ def _config_show_cmd(args: argparse.Namespace) -> int:
     return 0
 
 
+def _env_keys_for_mode(mode: str) -> list[str]:
+    normalized = (mode or "core").strip().lower()
+    if normalized == "core":
+        return list(CORE_ENV_KEYS)
+    if normalized == "advanced":
+        return list(ADVANCED_ENV_KEYS)
+    if normalized == "all":
+        merged = list(CORE_ENV_KEYS)
+        for key in ADVANCED_ENV_KEYS:
+            if key not in merged:
+                merged.append(key)
+        return merged
+    raise ValueError(f"Unsupported mode: {mode}")
+
+
+def _config_env_cmd(args: argparse.Namespace) -> int:
+    mode = str(args.mode).strip().lower()
+    try:
+        keys = _env_keys_for_mode(mode)
+    except ValueError as exc:
+        print(f"[config env] {exc}", file=sys.stderr)
+        return 2
+
+    variables: dict[str, dict[str, Any]] = {}
+    for key in keys:
+        raw = os.getenv(key, "")
+        configured = bool(str(raw).strip())
+        display_value = str(raw)
+        if not args.show_secrets and key in SENSITIVE_ENV_KEYS:
+            display_value = _mask_secret(display_value)
+        variables[key] = {
+            "configured": configured,
+            "value": display_value,
+        }
+
+    payload = {
+        "mode": mode,
+        "variables": variables,
+    }
+
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+
+    print(f"[config env] mode={mode}")
+    for key in keys:
+        value = variables[key]["value"]
+        configured = variables[key]["configured"]
+        suffix = "" if configured else "  # <empty>"
+        print(f"{key}={value}{suffix}")
+
+    if mode == "core":
+        print("[config env] Tip: use --mode advanced to view additional tuning variables.")
+    return 0
+
+
 def _build_setup_next_steps(payload: dict[str, Any]) -> list[str]:
     by_name = {item.get("name"): item for item in payload.get("steps", [])}
     lines: list[str] = []
@@ -1024,6 +1147,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "  uv run energycrawler run --platform xhs --keywords 新能源\n"
             "  uv run energycrawler data latest --download\n"
             "  uv run energycrawler config show --simple\n"
+            "  uv run energycrawler config env --mode core\n"
             "  uv run energycrawler data latest --platform xhs\n"
             "  uv run energycrawler data latest --download --platform x --output ./latest.json\n"
             "  uv run energycrawler energy ensure\n"
@@ -1167,9 +1291,20 @@ def _build_parser() -> argparse.ArgumentParser:
     config_subparsers = config_parser.add_subparsers(dest="config_command", required=True)
     config_show_parser = config_subparsers.add_parser("show", help="Show runtime config")
     config_show_parser.add_argument("--show-secrets", action="store_true")
-    config_show_parser.add_argument("--simple", action="store_true", help="Show only core runtime config")
+    config_show_parser.add_argument(
+        "--simple",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Show only core runtime config (default: true)",
+    )
     config_show_parser.add_argument("--json", action="store_true")
     config_show_parser.set_defaults(handler=_config_show_cmd)
+
+    config_env_parser = config_subparsers.add_parser("env", help="Show environment variables by complexity")
+    config_env_parser.add_argument("--mode", choices=["core", "advanced", "all"], default="core")
+    config_env_parser.add_argument("--show-secrets", action="store_true")
+    config_env_parser.add_argument("--json", action="store_true")
+    config_env_parser.set_defaults(handler=_config_env_cmd)
 
     return parser
 

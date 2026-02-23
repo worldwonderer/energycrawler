@@ -56,6 +56,13 @@ def test_parser_includes_setup_config_show_and_precheck():
     assert config_args.command == "config"
     assert config_args.config_command == "show"
     assert config_args.handler is cli._config_show_cmd
+    assert config_args.simple is True
+
+    env_args = parser.parse_args(["config", "env"])
+    assert env_args.command == "config"
+    assert env_args.config_command == "env"
+    assert env_args.mode == "core"
+    assert env_args.handler is cli._config_env_cmd
 
     precheck_args = parser.parse_args(["precheck", "--json"])
     assert precheck_args.command == "precheck"
@@ -127,6 +134,35 @@ def test_config_show_simple_outputs_core_keys(monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "PLATFORM=xhs" in output
     assert "ENERGY_SERVICE_ADDRESS=localhost:50051" in output
+
+
+def test_config_env_json_hides_secret_values(monkeypatch, capsys):
+    monkeypatch.setenv("PLATFORM", "xhs")
+    monkeypatch.setenv("COOKIES", "a1=abcdef123456")
+    monkeypatch.delenv("TWITTER_AUTH_TOKEN", raising=False)
+
+    args = argparse.Namespace(mode="core", show_secrets=False, json=True)
+    code = cli._config_env_cmd(args)
+
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "core"
+    assert payload["variables"]["PLATFORM"]["configured"] is True
+    assert payload["variables"]["COOKIES"]["configured"] is True
+    assert payload["variables"]["COOKIES"]["value"] != "a1=abcdef123456"
+    assert payload["variables"]["TWITTER_AUTH_TOKEN"]["configured"] is False
+
+
+def test_config_env_text_prints_empty_marker(monkeypatch, capsys):
+    monkeypatch.delenv("KEYWORDS", raising=False)
+    args = argparse.Namespace(mode="core", show_secrets=False, json=False)
+
+    code = cli._config_env_cmd(args)
+
+    assert code == 0
+    output = capsys.readouterr().out
+    assert "KEYWORDS=" in output
+    assert "# <empty>" in output
 
 
 def test_doctor_keeps_failure_code_when_cleanup_passes(monkeypatch, capsys):

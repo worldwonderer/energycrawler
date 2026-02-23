@@ -38,6 +38,10 @@ uv run energycrawler setup
 # config show（核心配置）
 uv run energycrawler config show --simple
 
+# 环境变量分层查看
+uv run energycrawler config env --mode core
+uv run energycrawler config env --mode advanced
+
 # doctor（全量体检）
 uv run energycrawler doctor
 ```
