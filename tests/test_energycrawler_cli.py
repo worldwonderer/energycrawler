@@ -285,3 +285,78 @@ def test_run_simple_requires_keywords_for_search(capsys):
 
     assert code == 2
     assert "requires --keywords" in capsys.readouterr().err
+
+
+def test_auto_browser_env_is_generated_when_missing(monkeypatch):
+    monkeypatch.delenv("ENERGYCRAWLER_BROWSER_ID", raising=False)
+    monkeypatch.setenv("ENERGY_BROWSER_ID_PREFIX", "energycrawler")
+
+    env = cli._runtime_env_with_auto_browser_id("xhs")
+
+    assert env is not None
+    auto_id = env["ENERGYCRAWLER_BROWSER_ID"]
+    assert auto_id.startswith("energycrawler_xhs_cli_")
+
+
+def test_auto_browser_env_respects_manual_override(monkeypatch):
+    monkeypatch.setenv("ENERGYCRAWLER_BROWSER_ID", "manual_browser_id")
+
+    env = cli._runtime_env_with_auto_browser_id("x")
+
+    assert env is None
+
+
+def test_run_simple_passes_auto_browser_env_to_main(monkeypatch):
+    captured: dict[str, object] = {}
+
+    args = argparse.Namespace(
+        platform="x",
+        crawler_type="search",
+        keywords="open source",
+        specified_id="",
+        creator_id="",
+        safety_profile="balanced",
+        save_option="json",
+        headless=False,
+        dry_run=False,
+        extra=[],
+    )
+
+    monkeypatch.delenv("ENERGYCRAWLER_BROWSER_ID", raising=False)
+
+    def _fake_run_python_entry(script_path, forwarded_args, *, env=None):
+        captured["script"] = str(script_path)
+        captured["args"] = list(forwarded_args)
+        captured["env"] = env
+        return 0
+
+    monkeypatch.setattr(cli, "_run_python_entry", _fake_run_python_entry)
+
+    code = cli._run_simple_cmd(args)
+
+    assert code == 0
+    assert captured["script"].endswith("main.py")
+    assert isinstance(captured["env"], dict)
+    auto_id = captured["env"]["ENERGYCRAWLER_BROWSER_ID"]
+    assert auto_id.startswith("energycrawler_x_cli_")
+
+
+def test_crawl_cmd_passes_auto_browser_env_to_main(monkeypatch):
+    captured: dict[str, object] = {}
+    monkeypatch.delenv("ENERGYCRAWLER_BROWSER_ID", raising=False)
+
+    def _fake_run_python_entry(script_path, forwarded_args, *, env=None):
+        captured["script"] = str(script_path)
+        captured["args"] = list(forwarded_args)
+        captured["env"] = env
+        return 0
+
+    monkeypatch.setattr(cli, "_run_python_entry", _fake_run_python_entry)
+    args = argparse.Namespace(args=["--", "--platform", "x", "--type", "search", "--keywords", "test"])
+
+    code = cli._crawl_cmd(args)
+
+    assert code == 0
+    assert captured["script"].endswith("main.py")
+    assert captured["args"][0:2] == ["--platform", "x"]
+    assert captured["env"]["ENERGYCRAWLER_BROWSER_ID"].startswith("energycrawler_x_cli_")

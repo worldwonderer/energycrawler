@@ -88,6 +88,8 @@ uv run uvicorn api.main:app --port 8080 --reload
 
 访问接口文档：`http://localhost:8080/docs`。
 
+> 说明：CLI 运行时会为每次任务自动生成独立 `ENERGYCRAWLER_BROWSER_ID`，默认隔离 xhs/x 浏览器会话。
+
 ### API 食谱（复制即用）
 
 查看运行态健康快照（Energy / 登录态 / 队列）：

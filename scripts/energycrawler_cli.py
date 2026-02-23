@@ -18,6 +18,7 @@ from typing import Any, Sequence
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -145,14 +146,54 @@ def _normalize_passthrough_args(raw: Sequence[str]) -> list[str]:
     return args
 
 
-def _run_command(cmd: Sequence[str]) -> int:
-    return subprocess.call(list(cmd), cwd=str(PROJECT_ROOT))
+def _extract_option_value(args: Sequence[str], flag: str) -> str | None:
+    for idx, item in enumerate(args):
+        if item == flag:
+            if idx + 1 < len(args):
+                next_item = args[idx + 1]
+                if not next_item.startswith("-"):
+                    return next_item
+            return None
+        if item.startswith(f"{flag}="):
+            return item.split("=", 1)[1]
+    return None
 
 
-def _run_command_capture(cmd: Sequence[str]) -> subprocess.CompletedProcess[str]:
+def _default_platform() -> str:
+    return (os.getenv("PLATFORM", "xhs") or "xhs").strip().lower() or "xhs"
+
+
+def _build_auto_browser_id(platform: str) -> str:
+    prefix = (os.getenv("ENERGY_BROWSER_ID_PREFIX", "energycrawler") or "energycrawler").strip()
+    normalized_platform = (platform or _default_platform()).strip().lower() or "xhs"
+    return f"{prefix}_{normalized_platform}_cli_{os.getpid()}_{uuid.uuid4().hex[:8]}"
+
+
+def _runtime_env_with_auto_browser_id(platform: str | None = None) -> dict[str, str] | None:
+    manual_browser_id = (os.getenv("ENERGYCRAWLER_BROWSER_ID", "") or "").strip()
+    if manual_browser_id:
+        return None
+
+    resolved_platform = (platform or _default_platform()).strip().lower() or "xhs"
+    return {
+        **os.environ,
+        "ENERGYCRAWLER_BROWSER_ID": _build_auto_browser_id(resolved_platform),
+    }
+
+
+def _run_command(cmd: Sequence[str], *, env: dict[str, str] | None = None) -> int:
+    return subprocess.call(list(cmd), cwd=str(PROJECT_ROOT), env=env)
+
+
+def _run_command_capture(
+    cmd: Sequence[str],
+    *,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         list(cmd),
         cwd=str(PROJECT_ROOT),
+        env=env,
         capture_output=True,
         text=True,
     )
@@ -164,14 +205,24 @@ def _python_exec_prefix() -> list[str]:
     return [sys.executable]
 
 
-def _run_python_entry(script_path: Path, args: Sequence[str]) -> int:
+def _run_python_entry(
+    script_path: Path,
+    args: Sequence[str],
+    *,
+    env: dict[str, str] | None = None,
+) -> int:
     cmd = [*_python_exec_prefix(), str(script_path), *list(args)]
-    return _run_command(cmd)
+    return _run_command(cmd, env=env)
 
 
-def _run_python_entry_capture(script_path: Path, args: Sequence[str]) -> subprocess.CompletedProcess[str]:
+def _run_python_entry_capture(
+    script_path: Path,
+    args: Sequence[str],
+    *,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     cmd = [*_python_exec_prefix(), str(script_path), *list(args)]
-    return _run_command_capture(cmd)
+    return _run_command_capture(cmd, env=env)
 
 
 def _run_local_script(script_name: str, args: Sequence[str]) -> int:
@@ -183,7 +234,10 @@ def _run_local_script_capture(script_name: str, args: Sequence[str]) -> subproce
 
 
 def _crawl_cmd(args: argparse.Namespace) -> int:
-    return _run_python_entry(PROJECT_ROOT / "main.py", _normalize_passthrough_args(args.args))
+    passthrough = _normalize_passthrough_args(args.args)
+    platform = _extract_option_value(passthrough, "--platform") or _default_platform()
+    run_env = _runtime_env_with_auto_browser_id(platform)
+    return _run_python_entry(PROJECT_ROOT / "main.py", passthrough, env=run_env)
 
 
 def _auth_cmd(args: argparse.Namespace) -> int:
@@ -279,12 +333,13 @@ def _run_simple_cmd(args: argparse.Namespace) -> int:
         print("uv run python main.py " + " ".join(forwarded))
         return 0
 
+    run_env = _runtime_env_with_auto_browser_id(str(args.platform))
     print(
         "[run] profile="
         f"{args.safety_profile} platform={args.platform} type={args.crawler_type} "
         "-> forwarding to main.py"
     )
-    return _run_python_entry(PROJECT_ROOT / "main.py", forwarded)
+    return _run_python_entry(PROJECT_ROOT / "main.py", forwarded, env=run_env)
 
 
 def _run_cleanup_report(*, json_output: bool, fail_on_findings: bool) -> int:

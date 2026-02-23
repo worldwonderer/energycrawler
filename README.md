@@ -27,6 +27,9 @@ CRAWLER_DISPATCH_RETRY_DELAY_SEC=2
 
 集群模式下每个任务会自动分配独立 `ENERGYCRAWLER_BROWSER_ID`，确保并发抓取时浏览器会话隔离。
 
+CLI 直跑时也会自动生成独立 `ENERGYCRAWLER_BROWSER_ID`（按平台 + 进程 + 随机后缀），避免 `xhs` 与 `x` 会话互相干扰。  
+如需固定会话，可手动设置 `ENERGYCRAWLER_BROWSER_ID` 覆盖自动值。
+
 ## 环境要求
 
 - Python `3.11`
