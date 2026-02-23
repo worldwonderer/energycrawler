@@ -23,6 +23,8 @@ import config
 from base.base_crawler import AbstractCrawler
 from store import twitter as twitter_store
 from tools.crawl_checkpoint import CrawlCheckpointManager
+from tools.auth_watchdog import run_auth_watchdog
+from tools.cookiecloud_sync import sync_cookiecloud_login_state
 from tools import utils
 from tools.safety import safe_sleep, calc_backoff_delay
 from var import crawler_type_var, source_keyword_var
@@ -82,6 +84,7 @@ class TwitterCrawler(AbstractCrawler):
         self._tweet_ids: List[str] = []
         self._max_count: int = getattr(config, 'CRAWLER_MAX_NOTES_COUNT', 50)
         self._checkpoint = CrawlCheckpointManager()
+        self._runtime_auth_recovery_count = 0
 
     async def start(self) -> None:
         """Start the Twitter crawler."""
@@ -104,8 +107,15 @@ class TwitterCrawler(AbstractCrawler):
         self.twitter_client = await self._create_twitter_client()
 
         # Check authentication
-        if not await self.twitter_client.pong():
+        watchdog_result = await run_auth_watchdog(
+            platform="x",
+            check_auth_fn=self._watchdog_check_x_auth,
+            recover_auth_fn=self._watchdog_recover_x_auth,
+            check_label="x auth state",
+        )
+        if not watchdog_result.success:
             utils.logger.warning("[TwitterCrawler.start] Authentication required. Please set TWITTER_AUTH_TOKEN.")
+            utils.logger.warning(f"[TwitterCrawler.start] Auth watchdog failed: {watchdog_result.message}")
             await self.close()
             return
 
@@ -205,6 +215,98 @@ class TwitterCrawler(AbstractCrawler):
     @staticmethod
     def _resume_checkpoint_enabled() -> bool:
         return bool(getattr(config, "RESUME_FROM_CHECKPOINT", True))
+
+    async def _watchdog_recover_x_auth(self, attempt: int) -> bool:
+        """
+        Try to recover X auth state for watchdog retries.
+
+        Recovery path:
+          1) Force refresh from CookieCloud (optional by config)
+          2) Rebuild Energy adapter + Twitter client with latest cookies
+        """
+        force_cookiecloud_sync = bool(getattr(config, "AUTH_WATCHDOG_FORCE_COOKIECLOUD_SYNC", True))
+        sync_result = await asyncio.to_thread(
+            sync_cookiecloud_login_state,
+            "x",
+            "",
+            force_cookiecloud_sync,
+        )
+
+        self._cookie_header = getattr(config, "TWITTER_COOKIE", "").strip()
+        self._auth_token = getattr(config, "TWITTER_AUTH_TOKEN", "").strip()
+        self._ct0 = getattr(config, "TWITTER_CT0", "").strip()
+
+        utils.logger.warning(
+            "[TwitterCrawler] Auth watchdog recovery attempt %s: %s",
+            attempt,
+            sync_result.message or "no cookiecloud update",
+        )
+
+        await self.close()
+        await self._init_energy_adapter()
+        self.twitter_client = await self._create_twitter_client()
+        return bool(sync_result.applied) or bool(self._auth_token and self._ct0)
+
+    async def _watchdog_check_x_auth(self) -> bool:
+        """Validate X auth state with both token pair and page login signal."""
+        if not await self.twitter_client.pong():
+            return False
+
+        auth_token = str(self._auth_token or "").strip()
+        ct0 = str(self._ct0 or "").strip()
+        if not (auth_token and ct0):
+            cookies = {}
+            if self.energy_adapter:
+                cookies = self.energy_adapter.get_auth_cookies()
+            auth_token = auth_token or str(cookies.get("auth_token", "")).strip()
+            ct0 = ct0 or str(cookies.get("ct0", "")).strip()
+            if not (auth_token and ct0):
+                return False
+
+        if self.energy_adapter:
+            try:
+                if not await self.energy_adapter.verify_login_via_page():
+                    return False
+            except Exception:
+                return False
+        return True
+
+    @staticmethod
+    def _is_auth_error(exc: Exception) -> bool:
+        if isinstance(exc, TwitterAuthError):
+            return True
+        message = str(exc).lower()
+        return "authentication failed" in message or "401" in message
+
+    async def _recover_runtime_auth_if_needed(self, exc: Exception, context: str, attempt: int) -> bool:
+        """
+        Trigger watchdog recovery when runtime API request returns auth errors.
+        """
+        if not bool(getattr(config, "AUTH_WATCHDOG_ENABLED", True)):
+            return False
+        if not self._is_auth_error(exc):
+            return False
+
+        max_runtime_recoveries = max(0, int(getattr(config, "AUTH_WATCHDOG_MAX_RUNTIME_RECOVERIES", 1)))
+        if self._runtime_auth_recovery_count >= max_runtime_recoveries:
+            utils.logger.warning(
+                "[TwitterCrawler.%s] Runtime auth recovery budget exhausted (%s/%s)",
+                context,
+                self._runtime_auth_recovery_count,
+                max_runtime_recoveries,
+            )
+            return False
+
+        self._runtime_auth_recovery_count += 1
+        utils.logger.warning(
+            "[TwitterCrawler.%s] Detected auth error on attempt %s, running watchdog recovery (%s/%s)",
+            context,
+            attempt,
+            self._runtime_auth_recovery_count,
+            max_runtime_recoveries,
+        )
+        recovered = await self._watchdog_recover_x_auth(attempt)
+        return recovered
 
     async def _init_energy_adapter(self) -> None:
         """Initialize Energy browser adapter."""
@@ -409,6 +511,9 @@ class TwitterCrawler(AbstractCrawler):
                     utils.logger.error(
                         f"[TwitterCrawler.search] Error searching tweets (attempt={attempt}): {e}"
                     )
+                    if await self._recover_runtime_auth_if_needed(e, context="search", attempt=attempt):
+                        attempt = 0
+                        continue
                     if attempt >= 3:
                         interrupted_by_error = True
                         break
@@ -458,6 +563,11 @@ class TwitterCrawler(AbstractCrawler):
                 except TwitterError as e:
                     utils.logger.error(
                         f"[TwitterCrawler.get_user_tweets] Error resolving user {requested_user_id}: {e}"
+                    )
+                    await self._recover_runtime_auth_if_needed(
+                        e,
+                        context="get_user_tweets.resolve_user",
+                        attempt=1,
                     )
                     continue
 
@@ -564,6 +674,13 @@ class TwitterCrawler(AbstractCrawler):
                     utils.logger.error(
                         f"[TwitterCrawler.get_user_tweets] Error fetching tweets (attempt={attempt}): {e}"
                     )
+                    if await self._recover_runtime_auth_if_needed(
+                        e,
+                        context="get_user_tweets",
+                        attempt=attempt,
+                    ):
+                        attempt = 0
+                        continue
                     if attempt >= 3:
                         interrupted_by_error = True
                         break

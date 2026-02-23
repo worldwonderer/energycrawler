@@ -247,7 +247,11 @@ def _apply_cookie_header(platform: str, cookie_header: str) -> None:
         config.TWITTER_CT0 = cookie_map.get("ct0", "").strip()
 
 
-def sync_cookiecloud_login_state(platform: str, explicit_cookie_header: str = "") -> CookieCloudSyncResult:
+def sync_cookiecloud_login_state(
+    platform: str,
+    explicit_cookie_header: str = "",
+    force_sync: bool | None = None,
+) -> CookieCloudSyncResult:
     normalized_platform = _normalize_platform(platform)
     result = CookieCloudSyncResult(platform=normalized_platform)
 
@@ -267,7 +271,10 @@ def sync_cookiecloud_login_state(platform: str, explicit_cookie_header: str = ""
         result.message = "CookieCloud sync skipped: explicit cookies provided by caller"
         return result
 
-    force_sync = bool(getattr(config, "COOKIECLOUD_FORCE_SYNC", False))
+    if force_sync is None:
+        force_sync = bool(getattr(config, "COOKIECLOUD_FORCE_SYNC", False))
+    else:
+        force_sync = bool(force_sync)
     if not force_sync and _runtime_has_cookie_for_platform(normalized_platform):
         result.skipped = True
         result.message = "CookieCloud sync skipped: local cookies already present"

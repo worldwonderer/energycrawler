@@ -90,6 +90,7 @@ uv run energycrawler energy check --host localhost --port 50051
 - `ENERGY_SERVICE_ADDRESS = "localhost:50051"`
 - X 平台鉴权：`TWITTER_AUTH_TOKEN`、`TWITTER_CT0`（也支持 `TWITTER_COOKIE` 自动提取并透传全量 Cookie）
 - CookieCloud 自动同步：`COOKIECLOUD_ENABLED`、`COOKIECLOUD_SERVER`、`COOKIECLOUD_UUID`、`COOKIECLOUD_PASSWORD`
+- Auth Watchdog：`AUTH_WATCHDOG_ENABLED`、`AUTH_WATCHDOG_MAX_RETRIES`（鉴权失败自动重试/刷新）
 - 安全上限：`CRAWLER_HARD_MAX_NOTES_COUNT`、`CRAWLER_HARD_MAX_CONCURRENCY`、`CRAWLER_MIN_SLEEP_SEC`
 
 登录后可把浏览器 Cookie 持久化到 `.env`：
@@ -124,6 +125,18 @@ COOKIECLOUD_FORCE_SYNC=false
 ```
 
 开启后，CLI 与 API 任务在启动前都会自动尝试同步对应平台 Cookie；默认不覆盖本地已有登录态（除非 `COOKIECLOUD_FORCE_SYNC=true`）。
+
+可选开启 Auth Watchdog（建议开启，默认开启）：
+
+```bash
+AUTH_WATCHDOG_ENABLED=true
+AUTH_WATCHDOG_MAX_RETRIES=1
+AUTH_WATCHDOG_RETRY_INTERVAL_SEC=2
+AUTH_WATCHDOG_FORCE_COOKIECLOUD_SYNC=true
+AUTH_WATCHDOG_MAX_RUNTIME_RECOVERIES=1
+```
+
+当运行中鉴权检查失败时，Watchdog 会自动触发 CookieCloud 刷新并重建客户端，再重试登录态验证。
 
 统一入口（等价命令）：
 

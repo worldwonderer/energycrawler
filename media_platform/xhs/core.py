@@ -34,6 +34,8 @@ from base.base_crawler import AbstractCrawler
 from model.m_xiaohongshu import NoteUrlInfo, CreatorUrlInfo
 from store import xhs as xhs_store
 from tools.crawl_checkpoint import CrawlCheckpointManager
+from tools.auth_watchdog import run_auth_watchdog
+from tools.cookiecloud_sync import sync_cookiecloud_login_state
 from tools import utils
 from tools.safety import safe_sleep
 from var import crawler_type_var, source_keyword_var
@@ -70,6 +72,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
         self.index_url = "https://www.xiaohongshu.com"
         self.user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36"
         self.energy_adapter = None
+        self.xhs_client = None
         self._cookie_header = getattr(config, "COOKIES", "")
         self._checkpoint = CrawlCheckpointManager()
 
@@ -114,10 +117,17 @@ class XiaoHongShuCrawler(AbstractCrawler):
         utils.logger.info("[XiaoHongShuCrawler] Creating XHS client...")
         self.xhs_client = await self._create_xhs_client()
 
-        # 检查登录状态
-        if not await self.xhs_client.pong():
+        # 检查登录状态（支持 Auth Watchdog 自动恢复）
+        watchdog_result = await run_auth_watchdog(
+            platform="xhs",
+            check_auth_fn=lambda: self.xhs_client.pong(),
+            recover_auth_fn=self._watchdog_recover_xhs_auth,
+            check_label="xhs login state",
+        )
+        if not watchdog_result.success:
             utils.logger.info("[XiaoHongShuCrawler] Login required, please login via browser first")
             utils.logger.info("[XiaoHongShuCrawler] Or set COOKIES in config")
+            utils.logger.warning(f"[XiaoHongShuCrawler] Auth watchdog failed: {watchdog_result.message}")
             # 在 Energy 模式下，可以手动设置 Cookie 或通过 Energy 浏览器登录
             return
 
@@ -131,6 +141,38 @@ class XiaoHongShuCrawler(AbstractCrawler):
             await self.get_creators_and_notes()
 
         utils.logger.info("[XiaoHongShuCrawler.start] XHS Crawler finished...")
+
+    async def _watchdog_recover_xhs_auth(self, attempt: int) -> bool:
+        """
+        Try to recover XHS auth state for watchdog retries.
+
+        Recovery path:
+          1) Force refresh from CookieCloud (optional by config)
+          2) Rebuild browser adapter + client with refreshed cookies
+        """
+        force_cookiecloud_sync = bool(getattr(config, "AUTH_WATCHDOG_FORCE_COOKIECLOUD_SYNC", True))
+        sync_result = await asyncio.to_thread(
+            sync_cookiecloud_login_state,
+            "xhs",
+            "",
+            force_cookiecloud_sync,
+        )
+
+        if sync_result.applied:
+            self._cookie_header = sync_result.cookie_header
+        elif getattr(config, "COOKIES", "").strip():
+            self._cookie_header = getattr(config, "COOKIES", "").strip()
+
+        utils.logger.warning(
+            "[XiaoHongShuCrawler] Auth watchdog recovery attempt %s: %s",
+            attempt,
+            sync_result.message or "no cookiecloud update",
+        )
+
+        await self.close()
+        await self._init_energy_adapter()
+        self.xhs_client = await self._create_xhs_client()
+        return bool(sync_result.applied)
 
     async def _init_energy_adapter(self) -> None:
         """初始化 Energy 浏览器适配器"""
@@ -653,6 +695,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
 
     async def close(self) -> None:
         """清理资源"""
+        self.xhs_client = None
         if self.energy_adapter:
             try:
                 self.energy_adapter.browser.close_browser(self.energy_adapter.browser_id)
@@ -663,3 +706,5 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 utils.logger.info("[XiaoHongShuCrawler.close] Energy adapter disconnected")
             except Exception as e:
                 utils.logger.error(f"[XiaoHongShuCrawler.close] Error disconnecting Energy adapter: {e}")
+            finally:
+                self.energy_adapter = None

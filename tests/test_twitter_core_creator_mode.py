@@ -7,6 +7,7 @@ import pytest
 
 import config
 from media_platform.twitter.core import TwitterCrawler
+from media_platform.twitter.exception import TwitterAuthError
 from media_platform.twitter.field import TwitterCrawlerMode
 from media_platform.twitter.models import TwitterTweet, TwitterUser
 
@@ -214,3 +215,56 @@ async def test_get_user_tweets_incremental_stops_at_known_marker(monkeypatch):
     assert call_state["api_calls"] == 1
     assert call_state["processed"] == ["new-1"]
     assert call_state["completed_latest_id"] == "new-1"
+
+
+@pytest.mark.asyncio
+async def test_watchdog_check_x_auth_uses_cookie_pair_and_page_signal():
+    crawler = TwitterCrawler()
+
+    class _FakeClient:
+        async def pong(self):
+            return True
+
+    class _FakeAdapter:
+        def get_auth_cookies(self):
+            return {"auth_token": "from-adapter", "ct0": "from-adapter"}
+
+        async def verify_login_via_page(self):
+            return True
+
+    crawler.twitter_client = _FakeClient()
+    crawler.energy_adapter = _FakeAdapter()
+    crawler._auth_token = ""
+    crawler._ct0 = ""
+
+    assert await crawler._watchdog_check_x_auth() is True
+
+
+@pytest.mark.asyncio
+async def test_recover_runtime_auth_if_needed_respects_budget(monkeypatch):
+    crawler = TwitterCrawler()
+    monkeypatch.setattr(config, "AUTH_WATCHDOG_ENABLED", True)
+    monkeypatch.setattr(config, "AUTH_WATCHDOG_MAX_RUNTIME_RECOVERIES", 1)
+
+    call_state = {"recover_calls": 0}
+
+    async def _fake_recover(_attempt):
+        call_state["recover_calls"] += 1
+        return True
+
+    crawler._watchdog_recover_x_auth = _fake_recover  # type: ignore[method-assign]
+
+    first = await crawler._recover_runtime_auth_if_needed(
+        TwitterAuthError("Authentication failed: 401"),
+        context="search",
+        attempt=1,
+    )
+    second = await crawler._recover_runtime_auth_if_needed(
+        TwitterAuthError("Authentication failed: 401"),
+        context="search",
+        attempt=2,
+    )
+
+    assert first is True
+    assert second is False
+    assert call_state["recover_calls"] == 1

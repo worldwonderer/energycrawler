@@ -191,6 +191,16 @@ COOKIECLOUD_UUID = os.getenv("COOKIECLOUD_UUID", "").strip()
 COOKIECLOUD_PASSWORD = os.getenv("COOKIECLOUD_PASSWORD", "").strip()
 COOKIECLOUD_TIMEOUT_SEC = _getenv_float("COOKIECLOUD_TIMEOUT_SEC", 10.0)
 
+# ==================== Auth Watchdog ====================
+# Auto-recover login state on auth failure (e.g. expired cookies).
+AUTH_WATCHDOG_ENABLED = _getenv_bool("AUTH_WATCHDOG_ENABLED", True)
+AUTH_WATCHDOG_MAX_RETRIES = max(0, _getenv_int("AUTH_WATCHDOG_MAX_RETRIES", 1))
+AUTH_WATCHDOG_RETRY_INTERVAL_SEC = max(0.0, _getenv_float("AUTH_WATCHDOG_RETRY_INTERVAL_SEC", 2.0))
+# When recovery runs, force CookieCloud refresh even if local cookie is already present.
+AUTH_WATCHDOG_FORCE_COOKIECLOUD_SYNC = _getenv_bool("AUTH_WATCHDOG_FORCE_COOKIECLOUD_SYNC", True)
+# Runtime auth recovery budget when API returns auth errors (e.g. 401).
+AUTH_WATCHDOG_MAX_RUNTIME_RECOVERIES = max(0, _getenv_int("AUTH_WATCHDOG_MAX_RUNTIME_RECOVERIES", 1))
+
 # ==================== Safety Controls ====================
 # Hard safety ceilings to reduce account risk for small-batch crawling.
 CRAWLER_HARD_MAX_NOTES_COUNT = int(os.getenv("CRAWLER_HARD_MAX_NOTES_COUNT", "20"))
