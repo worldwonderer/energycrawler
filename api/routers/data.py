@@ -16,12 +16,14 @@
 # 详细许可条款请参阅项目根目录下的LICENSE文件。
 # 使用本代码即表示您同意遵守上述原则和LICENSE中的所有条款。
 
-import os
 import json
+import os
+from csv import DictReader
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+import pandas as pd
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 
 from ..response import success_response
@@ -30,6 +32,140 @@ router = APIRouter(prefix="/data", tags=["data"])
 
 # Data directory
 DATA_DIR = Path(__file__).parent.parent.parent / "data"
+SUPPORTED_EXTENSIONS = {".json", ".csv", ".xlsx", ".xls"}
+PREVIEW_SUPPORTED_EXTENSIONS = {".json", ".csv", ".xlsx", ".xls"}
+SUPPORTED_FILE_TYPES = ", ".join(ext[1:] for ext in sorted(SUPPORTED_EXTENSIONS))
+
+
+def _normalize_file_type(file_type: Optional[str]) -> Optional[str]:
+    if not file_type:
+        return None
+
+    normalized = file_type.lower().lstrip(".")
+    if f".{normalized}" not in SUPPORTED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unsupported file type '{file_type}'. "
+                f"Supported types: {SUPPORTED_FILE_TYPES}"
+            ),
+        )
+    return normalized
+
+
+def _iter_data_files(platform: Optional[str] = None, file_type: Optional[str] = None) -> list[Path]:
+    normalized_file_type = _normalize_file_type(file_type)
+    if not DATA_DIR.exists():
+        return []
+
+    files: list[Path] = []
+    platform_filter = platform.lower() if platform else None
+
+    for root, _dirs, filenames in os.walk(DATA_DIR):
+        root_path = Path(root)
+        for filename in filenames:
+            file_path = root_path / filename
+            suffix = file_path.suffix.lower()
+            if suffix not in SUPPORTED_EXTENSIONS:
+                continue
+
+            rel_path = str(file_path.relative_to(DATA_DIR)).lower()
+            if platform_filter and platform_filter not in rel_path:
+                continue
+
+            if normalized_file_type and suffix[1:] != normalized_file_type:
+                continue
+
+            files.append(file_path)
+
+    return files
+
+
+def _resolve_safe_file_path(file_path: str) -> Path:
+    full_path = (DATA_DIR / file_path).resolve()
+
+    # Security check: ensure within DATA_DIR
+    try:
+        full_path.relative_to(DATA_DIR.resolve())
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    if not full_path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    if not full_path.is_file():
+        raise HTTPException(status_code=400, detail="Not a file")
+
+    return full_path
+
+
+def _find_latest_file(platform: Optional[str] = None, file_type: Optional[str] = None) -> Path:
+    files = _iter_data_files(platform=platform, file_type=file_type)
+    if not files:
+        filters = []
+        if platform:
+            filters.append(f"platform={platform}")
+        if file_type:
+            filters.append(f"file_type={file_type}")
+        filter_msg = f" for filters ({', '.join(filters)})" if filters else ""
+        raise HTTPException(status_code=404, detail=f"No data files found{filter_msg}")
+
+    return max(files, key=lambda p: p.stat().st_mtime)
+
+
+def _preview_file(full_path: Path, limit: int = 100) -> dict:
+    suffix = full_path.suffix.lower()
+    if suffix not in PREVIEW_SUPPORTED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Preview not supported for file type: {suffix.lstrip('.') or 'unknown'}",
+        )
+
+    try:
+        if suffix == ".json":
+            with open(full_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return {"data": data[:limit], "total": len(data)}
+                return {"data": data, "total": 1}
+
+        if suffix == ".csv":
+            with open(full_path, "r", encoding="utf-8") as f:
+                reader = DictReader(f)
+                rows = []
+                for i, row in enumerate(reader):
+                    if i >= limit:
+                        break
+                    rows.append(row)
+
+            with open(full_path, "r", encoding="utf-8") as f:
+                total = max(sum(1 for _ in f) - 1, 0)
+            return {"data": rows, "total": total}
+
+        # xlsx/xls
+        df = pd.read_excel(full_path, nrows=limit)
+        df_count = pd.read_excel(full_path, usecols=[0])
+        total = len(df_count)
+        rows = df.where(pd.notnull(df), None).to_dict(orient="records")
+        return {
+            "data": rows,
+            "total": total,
+            "columns": list(df.columns),
+        }
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON file")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _download_file(full_path: Path) -> FileResponse:
+    return FileResponse(
+        path=full_path,
+        filename=full_path.name,
+        media_type="application/octet-stream",
+    )
 
 
 def get_file_info(file_path: Path) -> dict:
@@ -39,14 +175,16 @@ def get_file_info(file_path: Path) -> dict:
 
     # Try to get record count
     try:
-        if file_path.suffix == ".json":
+        if file_path.suffix.lower() == ".json":
             with open(file_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 if isinstance(data, list):
                     record_count = len(data)
-        elif file_path.suffix == ".csv":
+                else:
+                    record_count = 1
+        elif file_path.suffix.lower() == ".csv":
             with open(file_path, "r", encoding="utf-8") as f:
-                record_count = sum(1 for _ in f) - 1  # Subtract header row
+                record_count = max(sum(1 for _ in f) - 1, 0)
     except Exception:
         pass
 
@@ -56,40 +194,19 @@ def get_file_info(file_path: Path) -> dict:
         "size": stat.st_size,
         "modified_at": stat.st_mtime,
         "record_count": record_count,
-        "type": file_path.suffix[1:] if file_path.suffix else "unknown"
+        "type": file_path.suffix[1:] if file_path.suffix else "unknown",
     }
 
 
 @router.get("/files")
 async def list_data_files(platform: Optional[str] = None, file_type: Optional[str] = None):
     """Get data file list"""
-    if not DATA_DIR.exists():
-        return success_response({"files": []}, message="Data files")
-
     files = []
-    supported_extensions = {".json", ".csv", ".xlsx", ".xls"}
-
-    for root, dirs, filenames in os.walk(DATA_DIR):
-        root_path = Path(root)
-        for filename in filenames:
-            file_path = root_path / filename
-            if file_path.suffix.lower() not in supported_extensions:
-                continue
-
-            # Platform filter
-            if platform:
-                rel_path = str(file_path.relative_to(DATA_DIR))
-                if platform.lower() not in rel_path.lower():
-                    continue
-
-            # Type filter
-            if file_type and file_path.suffix[1:].lower() != file_type.lower():
-                continue
-
-            try:
-                files.append(get_file_info(file_path))
-            except Exception:
-                continue
+    for file_path in _iter_data_files(platform=platform, file_type=file_type):
+        try:
+            files.append(get_file_info(file_path))
+        except Exception:
+            continue
 
     # Sort by modification time (newest first)
     files.sort(key=lambda x: x["modified_at"], reverse=True)
@@ -97,104 +214,46 @@ async def list_data_files(platform: Optional[str] = None, file_type: Optional[st
     return success_response({"files": files}, message="Data files")
 
 
+@router.get("/latest")
+async def get_latest_file(
+    platform: Optional[str] = None,
+    file_type: Optional[str] = None,
+    preview: bool = True,
+    limit: int = Query(default=100, ge=1),
+):
+    """Get latest file preview or download"""
+    latest_file = _find_latest_file(platform=platform, file_type=file_type)
+    if not preview:
+        return _download_file(latest_file)
+
+    payload = _preview_file(latest_file, limit=limit)
+    payload["file"] = get_file_info(latest_file)
+    return success_response(payload, message="Latest file preview")
+
+
+@router.get("/latest/download")
+async def download_latest_file(platform: Optional[str] = None, file_type: Optional[str] = None):
+    """Download latest file"""
+    latest_file = _find_latest_file(platform=platform, file_type=file_type)
+    return _download_file(latest_file)
+
+
 @router.get("/files/{file_path:path}")
-async def get_file_content(file_path: str, preview: bool = True, limit: int = 100):
+async def get_file_content(file_path: str, preview: bool = True, limit: int = Query(default=100, ge=1)):
     """Get file content or preview"""
-    full_path = DATA_DIR / file_path
-
-    if not full_path.exists():
-        raise HTTPException(status_code=404, detail="File not found")
-
-    if not full_path.is_file():
-        raise HTTPException(status_code=400, detail="Not a file")
-
-    # Security check: ensure within DATA_DIR
-    try:
-        full_path.resolve().relative_to(DATA_DIR.resolve())
-    except ValueError:
-        raise HTTPException(status_code=403, detail="Access denied")
+    full_path = _resolve_safe_file_path(file_path)
 
     if preview:
-        # Return preview data
-        try:
-            if full_path.suffix == ".json":
-                with open(full_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    if isinstance(data, list):
-                        return success_response(
-                            {"data": data[:limit], "total": len(data)},
-                            message="File preview",
-                        )
-                    return success_response({"data": data, "total": 1}, message="File preview")
-            elif full_path.suffix == ".csv":
-                import csv
-                with open(full_path, "r", encoding="utf-8") as f:
-                    reader = csv.DictReader(f)
-                    rows = []
-                    for i, row in enumerate(reader):
-                        if i >= limit:
-                            break
-                        rows.append(row)
-                    # Re-read to get total count
-                    f.seek(0)
-                    total = sum(1 for _ in f) - 1
-                    return success_response({"data": rows, "total": total}, message="File preview")
-            elif full_path.suffix.lower() in (".xlsx", ".xls"):
-                import pandas as pd
-                # Read first limit rows
-                df = pd.read_excel(full_path, nrows=limit)
-                # Get total row count (only read first column to save memory)
-                df_count = pd.read_excel(full_path, usecols=[0])
-                total = len(df_count)
-                # Convert to list of dictionaries, handle NaN values
-                rows = df.where(pd.notnull(df), None).to_dict(orient='records')
-                return success_response(
-                    {
-                        "data": rows,
-                        "total": total,
-                        "columns": list(df.columns),
-                    },
-                    message="File preview",
-                )
-            else:
-                raise HTTPException(status_code=400, detail="Unsupported file type for preview")
-        except json.JSONDecodeError:
-            raise HTTPException(status_code=400, detail="Invalid JSON file")
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
-    else:
-        # Return file download
-        return FileResponse(
-            path=full_path,
-            filename=full_path.name,
-            media_type="application/octet-stream"
-        )
+        return success_response(_preview_file(full_path, limit=limit), message="File preview")
+
+    return _download_file(full_path)
 
 
 @router.get("/download/{file_path:path}")
 async def download_file(file_path: str):
     """Download file"""
-    full_path = DATA_DIR / file_path
-
-    if not full_path.exists():
-        raise HTTPException(status_code=404, detail="File not found")
-
-    if not full_path.is_file():
-        raise HTTPException(status_code=400, detail="Not a file")
-
-    # Security check
-    try:
-        full_path.resolve().relative_to(DATA_DIR.resolve())
-    except ValueError:
-        raise HTTPException(status_code=403, detail="Access denied")
-
-    return FileResponse(
-        path=full_path,
-        filename=full_path.name,
-        media_type="application/octet-stream"
-    )
+    full_path = _resolve_safe_file_path(file_path)
+    return _download_file(full_path)
 
 
 @router.get("/stats")
@@ -213,13 +272,11 @@ async def get_data_stats():
         "by_type": {}
     }
 
-    supported_extensions = {".json", ".csv", ".xlsx", ".xls"}
-
-    for root, dirs, filenames in os.walk(DATA_DIR):
+    for root, _dirs, filenames in os.walk(DATA_DIR):
         root_path = Path(root)
         for filename in filenames:
             file_path = root_path / filename
-            if file_path.suffix.lower() not in supported_extensions:
+            if file_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
                 continue
 
             try:
