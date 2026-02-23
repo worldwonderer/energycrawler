@@ -211,7 +211,42 @@ uv run energycrawler auth xhs-qr-login --api-base http://localhost:8080
 
 当 `XHS_SIGNATURE_CANARY_ENABLED=true` 时，API 入队 preflight 与 CLI 启动前检查都会执行签名 runtime canary。
 
-### 4. 运行 CLI
+### 4. setup / config show / doctor（建议先执行）
+
+一键初始化（setup 向导，当前命令名为 `init`）：
+
+```bash
+# 首次使用推荐：
+uv run energycrawler init --template .env.quickstart.example --check
+
+# 已有 .env 且希望覆盖：
+uv run energycrawler init --force --check
+```
+
+查看当前可选配置（当前版本暂未提供 `energycrawler config show` 子命令，可通过 API 查看）：
+
+```bash
+curl -s http://localhost:8080/api/config/platforms | jq .
+curl -s http://localhost:8080/api/config/options | jq .
+```
+
+环境体检（doctor）：
+
+```bash
+# 全量检查：Energy 连通 + 登录态就绪
+uv run energycrawler doctor
+
+# 仅检查 Energy 连通（排查服务问题时更快）
+uv run energycrawler doctor --skip-login-check --json
+```
+
+常见故障排查提示：
+
+- `doctor` 报 `uv command not found`：先安装并配置 [uv](https://docs.astral.sh/uv/getting-started/installation/)
+- `doctor` 报 Energy 健康检查失败：先执行 `uv run energycrawler energy ensure`
+- `doctor` 报登录态失败：先执行 `uv run energycrawler auth status --json`，确认 Cookie/Token 有效
+
+### 5. 运行 CLI
 
 小红书关键词抓取：
 
@@ -297,6 +332,13 @@ uv run uvicorn api.main:app --port 8080 --reload
 - `GET /api/auth/xhs/qr/session/{session_id}/status`：轮询扫码状态
 - `POST /api/auth/xhs/qr/session/{session_id}/cancel`：结束登录会话
 - `POST /api/auth/xhs/energy/sync`：同步已登录 Energy 会话到 `.env` 的 `COOKIES`
+- `GET /api/config/platforms`：查看支持的平台列表（config show）
+- `GET /api/config/options`：查看可选登录类型/抓取模式/存储方式（config show）
+- `GET /api/data/files`：按更新时间倒序列出导出文件
+- `GET /api/data/files/{file_path}?preview=true&limit=20`：预览导出文件前 N 条
+- `GET /api/data/download/{file_path}`：下载指定导出文件
+- `GET /api/ws/logs`：实时日志 WebSocket（`ws://localhost:8080/api/ws/logs`）
+- `GET /api/ws/status`：实时状态 WebSocket（`ws://localhost:8080/api/ws/status`）
 
 `POST /api/crawler/start` 支持额外安全参数：
 
@@ -307,6 +349,39 @@ uv run uvicorn api.main:app --port 8080 --reload
 
 - Energy 服务连通性检查
 - `x` 平台鉴权材料检查（`auth_token` + `ct0`）
+
+### API 操作食谱（可直接复制）
+
+查看 config（等价 `config show`）：
+
+```bash
+curl -s http://localhost:8080/api/config/platforms | jq .
+curl -s http://localhost:8080/api/config/options | jq .
+```
+
+下载“最新导出数据”（先取最新文件，再预览，再下载）：
+
+```bash
+LATEST_FILE=$(curl -s http://localhost:8080/api/data/files | jq -r '.data.files[0].path')
+echo "latest file: $LATEST_FILE"
+
+# 预览前 20 条
+curl -s "http://localhost:8080/api/data/files/${LATEST_FILE}?preview=true&limit=20" | jq .
+
+# 下载完整文件到当前目录
+curl -L "http://localhost:8080/api/data/download/${LATEST_FILE}" -o "./latest-$(basename "$LATEST_FILE")"
+```
+
+WebSocket 订阅实时日志/状态（浏览器控制台可直接运行）：
+
+```javascript
+const logsWs = new WebSocket("ws://localhost:8080/api/ws/logs");
+logsWs.onmessage = (ev) => console.log("[logs]", ev.data);
+logsWs.onopen = () => logsWs.send("ping");
+
+const statusWs = new WebSocket("ws://localhost:8080/api/ws/status");
+statusWs.onmessage = (ev) => console.log("[status]", JSON.parse(ev.data));
+```
 
 ## 测试
 

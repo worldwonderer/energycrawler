@@ -31,6 +31,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from config.runtime_snapshot import API_CONFIG_RESPONSE_EXAMPLE, build_public_runtime_config
+
 from .routers import crawler_router, data_router, websocket_router, auth_router
 from .response import ApiError, error_response, status_to_error_code, success_response
 from .schemas import SaveDataOptionEnum
@@ -218,6 +220,35 @@ async def get_platforms():
             {"value": "x", "label": "X (Twitter)", "icon": "message-circle"},
         ]
     }, message="Supported platforms")
+
+
+@app.get(
+    "/api/config",
+    summary="Get runtime config snapshot (sanitized)",
+    description=(
+        "Return effective runtime configuration used by the API/crawler. "
+        "Sensitive fields (cookies/tokens/passwords) are masked and never exposed in plaintext."
+    ),
+    responses={
+        200: {
+            "description": "Sanitized runtime configuration snapshot",
+            "content": {
+                "application/json": {
+                    "example": success_response(
+                        API_CONFIG_RESPONSE_EXAMPLE,
+                        message="Runtime config snapshot",
+                    )
+                }
+            },
+        }
+    },
+)
+async def get_runtime_config():
+    """Get sanitized runtime configuration snapshot."""
+    return success_response(
+        build_public_runtime_config(),
+        message="Runtime config snapshot",
+    )
 
 
 @app.get("/api/config/options")

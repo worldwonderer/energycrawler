@@ -29,7 +29,21 @@ uv run energycrawler init
 uv run energycrawler energy ensure
 ```
 
-### 4. 运行爬虫
+### 4. setup / config show / doctor（先做环境可用性确认）
+
+```bash
+# setup（一键向导；当前命令名为 init）
+uv run energycrawler init --template .env.quickstart.example --check
+
+# config show（当前通过 API 查看）
+curl -s http://localhost:8080/api/config/platforms | jq .
+curl -s http://localhost:8080/api/config/options | jq .
+
+# doctor（全量体检）
+uv run energycrawler doctor
+```
+
+### 5. 运行爬虫
 
 ```bash
 # xhs 关键词搜索
@@ -55,6 +69,27 @@ uv run uvicorn api.main:app --port 8080 --reload
 ```
 
 访问接口文档：`http://localhost:8080/docs`。
+
+### API 食谱（复制即用）
+
+下载“最新导出文件”：
+
+```bash
+LATEST_FILE=$(curl -s http://localhost:8080/api/data/files | jq -r '.data.files[0].path')
+curl -s "http://localhost:8080/api/data/files/${LATEST_FILE}?preview=true&limit=20" | jq .
+curl -L "http://localhost:8080/api/data/download/${LATEST_FILE}" -o "./latest-$(basename "$LATEST_FILE")"
+```
+
+WebSocket 实时日志/状态订阅（浏览器控制台）：
+
+```javascript
+const logsWs = new WebSocket("ws://localhost:8080/api/ws/logs");
+logsWs.onmessage = (ev) => console.log("[logs]", ev.data);
+logsWs.onopen = () => logsWs.send("ping");
+
+const statusWs = new WebSocket("ws://localhost:8080/api/ws/status");
+statusWs.onmessage = (ev) => console.log("[status]", JSON.parse(ev.data));
+```
 
 ## 数据保存
 
