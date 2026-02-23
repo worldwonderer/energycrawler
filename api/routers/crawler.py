@@ -18,13 +18,14 @@
 
 from fastapi import APIRouter, HTTPException
 
-from ..schemas import CrawlerStartRequest, CrawlerStartResponse, CrawlerStatusResponse
+from ..response import success_response
+from ..schemas import CrawlerStartRequest
 from ..services import crawler_manager
 
 router = APIRouter(prefix="/crawler", tags=["crawler"])
 
 
-@router.post("/start", response_model=CrawlerStartResponse)
+@router.post("/start")
 async def start_crawler(request: CrawlerStartRequest):
     """Enqueue crawler task"""
     result = await crawler_manager.start(request)
@@ -37,13 +38,12 @@ async def start_crawler(request: CrawlerStartRequest):
             raise HTTPException(status_code=409, detail=error)
         raise HTTPException(status_code=400, detail=error)
 
-    return {
+    return success_response({
         "status": "ok",
-        "message": "Crawler task accepted",
         "task_id": result["task_id"],
         "queued_tasks": result["queued_tasks"],
         "running_workers": result["running_workers"],
-    }
+    }, message="Crawler task accepted")
 
 
 @router.post("/stop")
@@ -53,23 +53,23 @@ async def stop_crawler():
     if not success:
         raise HTTPException(status_code=400, detail="No crawler task is running")
 
-    return {"status": "ok", "message": "Crawler cluster stopped successfully"}
+    return success_response({"status": "ok"}, message="Crawler cluster stopped successfully")
 
 
-@router.get("/status", response_model=CrawlerStatusResponse)
+@router.get("/status")
 async def get_crawler_status():
     """Get crawler cluster status"""
-    return crawler_manager.get_status()
+    return success_response(crawler_manager.get_status(), message="Crawler cluster status")
 
 
 @router.get("/logs")
 async def get_logs(limit: int = 100):
     """Get recent logs"""
     logs = crawler_manager.logs[-limit:] if limit > 0 else crawler_manager.logs
-    return {"logs": [log.model_dump() for log in logs]}
+    return success_response({"logs": [log.model_dump() for log in logs]}, message="Crawler logs")
 
 
 @router.get("/cluster")
 async def get_cluster_status():
     """Get detailed cluster runtime snapshot"""
-    return crawler_manager.get_cluster_status()
+    return success_response(crawler_manager.get_cluster_status(), message="Crawler cluster snapshot")

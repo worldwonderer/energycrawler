@@ -68,19 +68,23 @@ def test_qr_auth_routes_success(monkeypatch):
 
     start_resp = client.post("/api/auth/xhs/qr/session/start", json={"headless": True})
     assert start_resp.status_code == 200
-    assert start_resp.json()["session_id"] == "s1"
+    assert start_resp.json()["success"] is True
+    assert start_resp.json()["data"]["session_id"] == "s1"
 
     qr_resp = client.post("/api/auth/xhs/qr/session/s1/qrcode")
     assert qr_resp.status_code == 200
-    assert qr_resp.json()["qr_id"] == "qr_1"
+    assert qr_resp.json()["success"] is True
+    assert qr_resp.json()["data"]["qr_id"] == "qr_1"
 
     status_resp = client.get("/api/auth/xhs/qr/session/s1/status")
     assert status_resp.status_code == 200
-    assert status_resp.json()["code_status"] == 0
+    assert status_resp.json()["success"] is True
+    assert status_resp.json()["data"]["code_status"] == 0
 
     cancel_resp = client.post("/api/auth/xhs/qr/session/s1/cancel")
     assert cancel_resp.status_code == 200
-    assert cancel_resp.json()["message"] == "session cancelled"
+    assert cancel_resp.json()["success"] is True
+    assert cancel_resp.json()["data"]["message"] == "session cancelled"
 
 
 def test_qr_auth_routes_not_found(monkeypatch):
@@ -89,12 +93,15 @@ def test_qr_auth_routes_not_found(monkeypatch):
 
     qr_resp = client.post("/api/auth/xhs/qr/session/missing/qrcode")
     assert qr_resp.status_code == 404
+    assert qr_resp.json()["success"] is False
 
     status_resp = client.get("/api/auth/xhs/qr/session/missing/status")
     assert status_resp.status_code == 404
+    assert status_resp.json()["success"] is False
 
     cancel_resp = client.post("/api/auth/xhs/qr/session/missing/cancel")
     assert cancel_resp.status_code == 404
+    assert cancel_resp.json()["success"] is False
 
 
 def test_energy_sync_route_success(monkeypatch):
@@ -108,8 +115,8 @@ def test_energy_sync_route_success(monkeypatch):
     assert resp.status_code == 200
     payload = resp.json()
     assert payload["success"] is True
-    assert payload["browser_id"] == "manual_login_xhs"
-    assert payload["message"] == "synced_from_energy_browser"
+    assert payload["data"]["browser_id"] == "manual_login_xhs"
+    assert payload["data"]["message"] == "synced_from_energy_browser"
 
 
 def test_energy_sync_route_failed(monkeypatch):
@@ -121,3 +128,4 @@ def test_energy_sync_route_failed(monkeypatch):
         json={"browser_id": "missing", "verify_login": True},
     )
     assert resp.status_code == 400
+    assert resp.json()["success"] is False

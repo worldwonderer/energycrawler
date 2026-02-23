@@ -24,6 +24,8 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
+from ..response import success_response
+
 router = APIRouter(prefix="/data", tags=["data"])
 
 # Data directory
@@ -62,7 +64,7 @@ def get_file_info(file_path: Path) -> dict:
 async def list_data_files(platform: Optional[str] = None, file_type: Optional[str] = None):
     """Get data file list"""
     if not DATA_DIR.exists():
-        return {"files": []}
+        return success_response({"files": []}, message="Data files")
 
     files = []
     supported_extensions = {".json", ".csv", ".xlsx", ".xls"}
@@ -92,7 +94,7 @@ async def list_data_files(platform: Optional[str] = None, file_type: Optional[st
     # Sort by modification time (newest first)
     files.sort(key=lambda x: x["modified_at"], reverse=True)
 
-    return {"files": files}
+    return success_response({"files": files}, message="Data files")
 
 
 @router.get("/files/{file_path:path}")
@@ -119,8 +121,11 @@ async def get_file_content(file_path: str, preview: bool = True, limit: int = 10
                 with open(full_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     if isinstance(data, list):
-                        return {"data": data[:limit], "total": len(data)}
-                    return {"data": data, "total": 1}
+                        return success_response(
+                            {"data": data[:limit], "total": len(data)},
+                            message="File preview",
+                        )
+                    return success_response({"data": data, "total": 1}, message="File preview")
             elif full_path.suffix == ".csv":
                 import csv
                 with open(full_path, "r", encoding="utf-8") as f:
@@ -133,7 +138,7 @@ async def get_file_content(file_path: str, preview: bool = True, limit: int = 10
                     # Re-read to get total count
                     f.seek(0)
                     total = sum(1 for _ in f) - 1
-                    return {"data": rows, "total": total}
+                    return success_response({"data": rows, "total": total}, message="File preview")
             elif full_path.suffix.lower() in (".xlsx", ".xls"):
                 import pandas as pd
                 # Read first limit rows
@@ -143,15 +148,20 @@ async def get_file_content(file_path: str, preview: bool = True, limit: int = 10
                 total = len(df_count)
                 # Convert to list of dictionaries, handle NaN values
                 rows = df.where(pd.notnull(df), None).to_dict(orient='records')
-                return {
-                    "data": rows,
-                    "total": total,
-                    "columns": list(df.columns)
-                }
+                return success_response(
+                    {
+                        "data": rows,
+                        "total": total,
+                        "columns": list(df.columns),
+                    },
+                    message="File preview",
+                )
             else:
                 raise HTTPException(status_code=400, detail="Unsupported file type for preview")
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="Invalid JSON file")
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
     else:
@@ -191,7 +201,10 @@ async def download_file(file_path: str):
 async def get_data_stats():
     """Get data statistics"""
     if not DATA_DIR.exists():
-        return {"total_files": 0, "total_size": 0, "by_platform": {}, "by_type": {}}
+        return success_response(
+            {"total_files": 0, "total_size": 0, "by_platform": {}, "by_type": {}},
+            message="Data statistics",
+        )
 
     stats = {
         "total_files": 0,
@@ -227,4 +240,4 @@ async def get_data_stats():
             except Exception:
                 continue
 
-    return stats
+    return success_response(stats, message="Data statistics")

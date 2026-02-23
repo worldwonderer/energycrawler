@@ -26,10 +26,13 @@ from pathlib import Path
 import subprocess
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from .routers import crawler_router, data_router, websocket_router, auth_router
+from .response import ApiError, error_response, status_to_error_code, success_response
 from .schemas import SaveDataOptionEnum
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -73,19 +76,73 @@ app.include_router(websocket_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
 
 
+@app.exception_handler(ApiError)
+async def handle_api_error(_request: Request, exc: ApiError):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=error_response(exc.code, exc.message, details=exc.details),
+    )
+
+
+@app.exception_handler(HTTPException)
+async def handle_http_exception(_request: Request, exc: HTTPException):
+    message = "Request failed"
+    details = None
+    code = status_to_error_code(exc.status_code)
+
+    if isinstance(exc.detail, dict):
+        message = str(exc.detail.get("message") or exc.detail.get("error") or message)
+        details = exc.detail.get("details")
+        if isinstance(exc.detail.get("code"), str):
+            code = exc.detail["code"]
+    elif isinstance(exc.detail, list):
+        message = "Request failed"
+        details = exc.detail
+    elif exc.detail is not None:
+        message = str(exc.detail)
+
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=error_response(code, message, details=details),
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def handle_validation_exception(_request: Request, exc: RequestValidationError):
+    return JSONResponse(
+        status_code=422,
+        content=error_response(
+            "VALIDATION_ERROR",
+            "Request validation failed",
+            details=exc.errors(),
+        ),
+    )
+
+
+@app.exception_handler(Exception)
+async def handle_unexpected_exception(_request: Request, _exc: Exception):
+    return JSONResponse(
+        status_code=500,
+        content=error_response("INTERNAL_ERROR", "Internal server error"),
+    )
+
+
 @app.get("/")
 async def root():
     """API root endpoint."""
-    return {
-        "message": "EnergyCrawler API",
-        "version": "1.0.0",
-        "docs": "/docs",
-    }
+    return success_response(
+        {
+            "service": "EnergyCrawler API",
+            "version": "1.0.0",
+            "docs": "/docs",
+        },
+        message="Service info",
+    )
 
 
 @app.get("/api/health")
 async def health_check():
-    return {"status": "ok"}
+    return success_response({"status": "ok"}, message="Service healthy")
 
 
 def _truncate_output(value: str) -> str:
@@ -113,53 +170,60 @@ async def check_environment():
         stdout_text = stdout.decode("utf-8", errors="ignore")
         stderr_text = stderr.decode("utf-8", errors="ignore")
         if process.returncode == 0:
-            return {
-                "success": True,
-                "message": "EnergyCrawler environment configured correctly",
-                "output": _truncate_output(stdout_text),
-            }
+            return success_response(
+                {
+                    "output": _truncate_output(stdout_text),
+                },
+                message="EnergyCrawler environment configured correctly",
+            )
 
         error_msg = stderr_text or stdout_text
-        return {
-            "success": False,
-            "message": "Environment check failed",
-            "error": _truncate_output(error_msg),
-        }
+        raise ApiError(
+            status_code=500,
+            code="ENV_CHECK_FAILED",
+            message="Environment check failed",
+            details=_truncate_output(error_msg),
+        )
     except asyncio.TimeoutError:
-        return {
-            "success": False,
-            "message": "Environment check timeout",
-            "error": f"Command execution exceeded {int(ENV_CHECK_TIMEOUT_SECONDS)} seconds",
-        }
+        raise ApiError(
+            status_code=504,
+            code="ENV_CHECK_TIMEOUT",
+            message="Environment check timeout",
+            details=f"Command execution exceeded {int(ENV_CHECK_TIMEOUT_SECONDS)} seconds",
+        )
     except FileNotFoundError:
-        return {
-            "success": False,
-            "message": "uv command not found",
-            "error": "Please ensure uv is installed and configured in system PATH",
-        }
+        raise ApiError(
+            status_code=500,
+            code="UV_NOT_FOUND",
+            message="uv command not found",
+            details="Please ensure uv is installed and configured in system PATH",
+        )
+    except ApiError:
+        raise
     except Exception as e:
-        return {
-            "success": False,
-            "message": "Environment check error",
-            "error": str(e),
-        }
+        raise ApiError(
+            status_code=500,
+            code="ENV_CHECK_ERROR",
+            message="Environment check error",
+            details=str(e),
+        ) from e
 
 
 @app.get("/api/config/platforms")
 async def get_platforms():
     """Get list of supported platforms"""
-    return {
+    return success_response({
         "platforms": [
             {"value": "xhs", "label": "Xiaohongshu", "icon": "book-open"},
             {"value": "x", "label": "X (Twitter)", "icon": "message-circle"},
         ]
-    }
+    }, message="Supported platforms")
 
 
 @app.get("/api/config/options")
 async def get_config_options():
     """Get all configuration options"""
-    return {
+    return success_response({
         "login_types": [
             {"value": "cookie", "label": "Cookie Login"},
         ],
@@ -172,7 +236,7 @@ async def get_config_options():
             {"value": option.value, "label": SAVE_OPTION_LABELS[option.value]}
             for option in SaveDataOptionEnum
         ],
-    }
+    }, message="Config options")
 
 
 if __name__ == "__main__":
