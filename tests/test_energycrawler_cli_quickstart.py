@@ -46,7 +46,7 @@ def test_parser_includes_quickstart_command():
     assert args.handler is cli._quickstart_cmd
 
 
-def test_quickstart_success_outputs_dashboard_next_steps(monkeypatch, capsys):
+def test_quickstart_success_outputs_user_flow_next_steps(monkeypatch, capsys):
     monkeypatch.setattr(cli, "_prepare_env_file", lambda **_kwargs: (True, "env ready"))
     monkeypatch.setattr(cli, "_run_local_script", lambda *_args, **_kwargs: 0)
     monkeypatch.setattr(
@@ -70,8 +70,9 @@ def test_quickstart_success_outputs_dashboard_next_steps(monkeypatch, capsys):
     assert code == 0
     output = capsys.readouterr().out
     assert "[quickstart] PASS: demo_trigger - demo trigger ok" in output
-    assert "/ui#/runtime" in output
+    assert "/ui#/welcome" in output
     assert "/ui#/runs" in output
+    assert "/ui#/settings" in output
 
 
 def test_quickstart_non_interactive_skips_demo_when_login_not_ready(monkeypatch, capsys):

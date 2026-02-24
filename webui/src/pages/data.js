@@ -2,7 +2,9 @@ const DEFAULT_PAGE_SIZE = 20
 const DEFAULT_PREVIEW_LIMIT = 30
 const DEFAULT_SORT_BY = "modified_at"
 const DEFAULT_SORT_ORDER = "desc"
+const PREVIEW_CELL_COLLAPSE_THRESHOLD = 160
 const STYLE_LINK_ID = "energycrawler-ui2-dashboard-data-style"
+const LATEST_STATUS_TONES = ["neutral", "info", "success", "warning", "danger"]
 
 function ensurePageStyle() {
   if (typeof document === "undefined") return
@@ -158,6 +160,49 @@ function formatDateTime(value) {
   return date.toLocaleString()
 }
 
+function toPreviewText(value) {
+  if (value === null || value === undefined) return ""
+  if (typeof value === "object") return JSON.stringify(value)
+  return String(value)
+}
+
+function createPreviewCell(value) {
+  const td = document.createElement("td")
+  td.className = "ui2-table__preview-cell"
+
+  const text = toPreviewText(value)
+  if (!text) {
+    td.textContent = ""
+    return td
+  }
+
+  const content = document.createElement("div")
+  content.className = "ui2-table__preview-text"
+  content.textContent = text
+  td.appendChild(content)
+
+  if (text.length < PREVIEW_CELL_COLLAPSE_THRESHOLD && !text.includes("\n")) {
+    return td
+  }
+
+  content.classList.add("is-clamped")
+
+  const toggleButton = document.createElement("button")
+  toggleButton.type = "button"
+  toggleButton.className = "ui2-link ui2-link--inline"
+  toggleButton.textContent = "展开"
+  toggleButton.setAttribute("aria-expanded", "false")
+  toggleButton.addEventListener("click", () => {
+    const expanded = content.classList.toggle("is-expanded")
+    content.classList.toggle("is-clamped", !expanded)
+    toggleButton.textContent = expanded ? "收起" : "展开"
+    toggleButton.setAttribute("aria-expanded", expanded ? "true" : "false")
+  })
+  td.appendChild(toggleButton)
+
+  return td
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -301,12 +346,13 @@ export function createDataPage(options = {}) {
   root.innerHTML = `
     <header class="ui2-page__header">
       <div class="ui2-page__header-main">
-        <p class="ui2-page__eyebrow">Data Hub</p>
-        <h2>Data Explorer</h2>
-        <p class="ui2-page__description ui2-muted">文件分页排序、Latest 预览与数据统计过滤</p>
+        <p class="ui2-page__eyebrow">查看结果</p>
+        <h2>最新结果</h2>
+        <p class="ui2-page__description ui2-muted">默认先看最近产出，再按需查看历史文件与统计。</p>
       </div>
       <div class="ui2-page__header-actions">
         <button type="button" class="ui2-btn" data-action="refresh-all">刷新全部</button>
+        <a class="ui2-btn ui2-btn--ghost" href="#/runs">去运行监控</a>
       </div>
     </header>
 
@@ -314,7 +360,78 @@ export function createDataPage(options = {}) {
 
     <section class="ui2-panel ui2-data__section">
       <div class="ui2-panel__header">
-        <h3>Files（分页 + 排序）</h3>
+        <h3>最新结果（默认）</h3>
+      </div>
+      <div class="ui2-card-grid ui2-card-grid--2">
+        <article class="ui2-card ui2-card--metric">
+          <h4 class="ui2-card__title">最新文件</h4>
+          <p class="ui2-card__value" data-role="latest-main-file">-</p>
+        </article>
+        <article class="ui2-card ui2-card--metric">
+          <h4 class="ui2-card__title">更新时间</h4>
+          <p class="ui2-card__value" data-role="latest-main-time">-</p>
+        </article>
+      </div>
+      <p class="ui2-page__hint" data-role="latest-main-preview">当前未加载预览数据</p>
+      <div class="ui2-data__latest-state">
+        <span class="ui2-chip ui2-chip--neutral" data-role="latest-status-chip">未加载</span>
+        <p class="ui2-page__hint" data-role="latest-status-message">点击「预览」即可先看最新结果。</p>
+      </div>
+      <div class="ui2-data__quick-actions">
+        <button type="button" class="ui2-btn ui2-btn--ghost" data-action="latest-refresh">仅刷新预览</button>
+        <button type="button" class="ui2-btn ui2-btn--ghost" data-action="quick-to-scheduler">去创建任务</button>
+        <button type="button" class="ui2-btn ui2-btn--ghost" data-action="quick-filter-reset">清空筛选</button>
+      </div>
+      <div class="ui2-tags ui2-data__quick-filters" role="group" aria-label="快速过滤">
+        <button type="button" class="ui2-tag" data-quick-platform="" data-quick-type="">全部</button>
+        <button type="button" class="ui2-tag" data-quick-platform="x" data-quick-type="json">X / JSON</button>
+        <button type="button" class="ui2-tag" data-quick-platform="xhs" data-quick-type="json">XHS / JSON</button>
+        <button type="button" class="ui2-tag" data-quick-platform="" data-quick-type="csv">CSV</button>
+      </div>
+
+      <form class="ui2-form ui2-form--inline" data-form="latest">
+        <label>
+          Platform
+          <select name="platform">
+            <option value="">全部</option>
+            <option value="x">X</option>
+            <option value="xhs">XHS</option>
+          </select>
+        </label>
+
+        <label>
+          Type
+          <select name="file_type">
+            <option value="">全部</option>
+            <option value="json">JSON</option>
+            <option value="csv">CSV</option>
+            <option value="xlsx">XLSX</option>
+            <option value="xls">XLS</option>
+          </select>
+        </label>
+
+        <label>
+          Limit
+          <input type="number" min="1" max="500" name="limit" value="${DEFAULT_PREVIEW_LIMIT}" />
+        </label>
+
+        <button type="submit" class="ui2-btn">预览</button>
+      </form>
+      <p class="ui2-page__error" data-role="latest-error" hidden></p>
+
+      <pre class="ui2-code-block" data-role="latest-meta">{}</pre>
+
+      <div class="ui2-table-wrap ui2-table-wrap--preview">
+        <table class="ui2-table ui2-table--compact ui2-table--preview">
+          <thead data-role="latest-head"></thead>
+          <tbody data-role="latest-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="ui2-panel ui2-data__section">
+      <div class="ui2-panel__header">
+        <h3>历史文件（进阶）</h3>
       </div>
       <form class="ui2-form ui2-form--inline" data-form="files">
         <label>
@@ -396,51 +513,7 @@ export function createDataPage(options = {}) {
 
     <section class="ui2-panel ui2-data__section">
       <div class="ui2-panel__header">
-        <h3>Latest 预览</h3>
-      </div>
-      <form class="ui2-form ui2-form--inline" data-form="latest">
-        <label>
-          Platform
-          <select name="platform">
-            <option value="">全部</option>
-            <option value="x">X</option>
-            <option value="xhs">XHS</option>
-          </select>
-        </label>
-
-        <label>
-          Type
-          <select name="file_type">
-            <option value="">全部</option>
-            <option value="json">JSON</option>
-            <option value="csv">CSV</option>
-            <option value="xlsx">XLSX</option>
-            <option value="xls">XLS</option>
-          </select>
-        </label>
-
-        <label>
-          Limit
-          <input type="number" min="1" max="500" name="limit" value="${DEFAULT_PREVIEW_LIMIT}" />
-        </label>
-
-        <button type="submit" class="ui2-btn">预览</button>
-      </form>
-      <p class="ui2-page__error" data-role="latest-error" hidden></p>
-
-      <pre class="ui2-code-block" data-role="latest-meta">{}</pre>
-
-      <div class="ui2-table-wrap">
-        <table class="ui2-table ui2-table--compact ui2-table--preview">
-          <thead data-role="latest-head"></thead>
-          <tbody data-role="latest-body"></tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="ui2-panel ui2-data__section">
-      <div class="ui2-panel__header">
-        <h3>Stats（平台 + 日期范围过滤）</h3>
+        <h3>结果统计（进阶）</h3>
       </div>
 
       <form class="ui2-form ui2-form--inline" data-form="stats">
@@ -508,11 +581,69 @@ export function createDataPage(options = {}) {
   const statsForm = root.querySelector('[data-form="stats"]')
 
   const refreshAllButton = root.querySelector('[data-action="refresh-all"]')
+  const latestRefreshButton = root.querySelector('[data-action="latest-refresh"]')
+  const quickToSchedulerButton = root.querySelector('[data-action="quick-to-scheduler"]')
+  const quickFilterResetButton = root.querySelector('[data-action="quick-filter-reset"]')
   const filesPrevButton = root.querySelector('[data-action="files-prev"]')
   const filesNextButton = root.querySelector('[data-action="files-next"]')
   const statsResetButton = root.querySelector('[data-action="stats-reset"]')
+  const quickFilterButtons = Array.from(root.querySelectorAll("[data-quick-platform]"))
 
   const cleanups = []
+
+  function showToast(message, toastOptions = {}) {
+    if (typeof options.showToast !== "function" || !message) return
+    options.showToast(message, {
+      title: "查看结果",
+      tone: "info",
+      ...toastOptions,
+    })
+  }
+
+  function syncFormControls() {
+    setFormControlValue(filesForm, "platform", state.filesQuery.platform)
+    setFormControlValue(filesForm, "file_type", state.filesQuery.fileType)
+    setFormControlValue(filesForm, "page_size", state.filesQuery.pageSize)
+    setFormControlValue(filesForm, "sort_by", state.filesQuery.sortBy)
+    setFormControlValue(filesForm, "sort_order", state.filesQuery.sortOrder)
+
+    setFormControlValue(latestForm, "platform", state.latestQuery.platform)
+    setFormControlValue(latestForm, "file_type", state.latestQuery.fileType)
+    setFormControlValue(latestForm, "limit", state.latestQuery.limit)
+
+    setFormControlValue(statsForm, "platform", state.statsQuery.platform)
+    setFormControlValue(statsForm, "from", state.statsQuery.from)
+    setFormControlValue(statsForm, "to", state.statsQuery.to)
+  }
+
+  function setLatestStatus({ tone = "neutral", label = "未加载", message = "" } = {}) {
+    const chip = root.querySelector('[data-role="latest-status-chip"]')
+    const text = root.querySelector('[data-role="latest-status-message"]')
+    if (chip) {
+      const validTone = LATEST_STATUS_TONES.includes(tone) ? tone : "neutral"
+      chip.classList.remove(
+        ...LATEST_STATUS_TONES.map((item) => `ui2-chip--${item}`)
+      )
+      chip.classList.add(`ui2-chip--${validTone}`)
+      chip.textContent = label
+    }
+    if (text) {
+      text.textContent = message
+    }
+  }
+
+  function refreshQuickFilterSelection() {
+    if (!quickFilterButtons.length) return
+    quickFilterButtons.forEach((button) => {
+      const buttonPlatform = String(button.dataset.quickPlatform || "")
+      const buttonType = String(button.dataset.quickType || "")
+      const isActive =
+        buttonPlatform === String(state.latestQuery.platform || "") &&
+        buttonType === String(state.latestQuery.fileType || "")
+      button.classList.toggle("is-active", isActive)
+      button.setAttribute("aria-pressed", isActive ? "true" : "false")
+    })
+  }
 
   function applyFiltersFromHash() {
     const params = parseHashQueryParams()
@@ -552,19 +683,8 @@ export function createDataPage(options = {}) {
     if (from) state.statsQuery.from = from
     if (to) state.statsQuery.to = to
 
-    setFormControlValue(filesForm, "platform", state.filesQuery.platform)
-    setFormControlValue(filesForm, "file_type", state.filesQuery.fileType)
-    setFormControlValue(filesForm, "page_size", state.filesQuery.pageSize)
-    setFormControlValue(filesForm, "sort_by", state.filesQuery.sortBy)
-    setFormControlValue(filesForm, "sort_order", state.filesQuery.sortOrder)
-
-    setFormControlValue(latestForm, "platform", state.latestQuery.platform)
-    setFormControlValue(latestForm, "file_type", state.latestQuery.fileType)
-    setFormControlValue(latestForm, "limit", state.latestQuery.limit)
-
-    setFormControlValue(statsForm, "platform", state.statsQuery.platform)
-    setFormControlValue(statsForm, "from", state.statsQuery.from)
-    setFormControlValue(statsForm, "to", state.statsQuery.to)
+    syncFormControls()
+    refreshQuickFilterSelection()
   }
 
   function setLoading(section, isLoading) {
@@ -574,6 +694,11 @@ export function createDataPage(options = {}) {
     if (refreshAllButton) {
       refreshAllButton.disabled = anyLoading
       refreshAllButton.textContent = anyLoading ? "刷新中..." : "刷新全部"
+    }
+
+    if (latestRefreshButton) {
+      latestRefreshButton.disabled = state.loading.latest
+      latestRefreshButton.textContent = state.loading.latest ? "预览刷新中..." : "仅刷新预览"
     }
   }
 
@@ -642,6 +767,37 @@ export function createDataPage(options = {}) {
     body.innerHTML = ""
 
     const { file, rows, columns, total } = state.latestResult
+    const latestFileName = file?.name || file?.path || "暂无文件"
+    const latestFileTime = file?.modified_at ? formatDateTime(file.modified_at) : "-"
+    const latestPreviewText =
+      rows.length > 0
+        ? `已展示 ${formatNumber(rows.length)} / ${formatNumber(total || rows.length)} 行预览`
+        : "暂无可预览数据"
+
+    setNodeText(root, '[data-role="latest-main-file"]', latestFileName)
+    setNodeText(root, '[data-role="latest-main-time"]', latestFileTime)
+    setNodeText(root, '[data-role="latest-main-preview"]', latestPreviewText)
+
+    if (rows.length > 0) {
+      setLatestStatus({
+        tone: "success",
+        label: "预览就绪",
+        message: `${latestFileName} · ${latestPreviewText}`,
+      })
+    } else if (file) {
+      setLatestStatus({
+        tone: "warning",
+        label: "文件为空",
+        message: "已定位到文件，但当前筛选下没有可展示数据，可调整平台/类型后重试。",
+      })
+    } else {
+      setLatestStatus({
+        tone: "warning",
+        label: "暂无结果",
+        message: "未找到匹配文件，可使用下方快捷过滤或前往创建任务。",
+      })
+    }
+
     meta.textContent = JSON.stringify(
       {
         file,
@@ -669,15 +825,7 @@ export function createDataPage(options = {}) {
     rows.forEach((row) => {
       const tr = document.createElement("tr")
       columns.forEach((column) => {
-        const td = document.createElement("td")
-        const value = row?.[column]
-        if (value === null || value === undefined) {
-          td.textContent = ""
-        } else if (typeof value === "object") {
-          td.textContent = JSON.stringify(value)
-        } else {
-          td.textContent = String(value)
-        }
+        const td = createPreviewCell(row?.[column])
         tr.appendChild(td)
       })
       body.appendChild(tr)
@@ -759,6 +907,11 @@ export function createDataPage(options = {}) {
   async function loadLatest() {
     setLoading("latest", true)
     setError(root, '[data-role="latest-error"]', "")
+    setLatestStatus({
+      tone: "info",
+      label: "加载中",
+      message: "正在获取最新结果预览，请稍候…",
+    })
 
     try {
       const data = await request("/api/data/latest", {
@@ -782,8 +935,15 @@ export function createDataPage(options = {}) {
       state.lastUpdatedAt = new Date().toISOString()
       renderLatestPreview()
       refreshUpdatedAt()
+      return true
     } catch (error) {
       setError(root, '[data-role="latest-error"]', `Latest 预览失败：${error?.message || "unknown error"}`)
+      setLatestStatus({
+        tone: "danger",
+        label: "预览失败",
+        message: `接口请求失败：${error?.message || "unknown error"}`,
+      })
+      return false
     } finally {
       setLoading("latest", false)
     }
@@ -846,6 +1006,7 @@ export function createDataPage(options = {}) {
       state.latestQuery.platform = String(formData.get("platform") || "")
       state.latestQuery.fileType = String(formData.get("file_type") || "")
       state.latestQuery.limit = Math.max(1, Number(formData.get("limit") || DEFAULT_PREVIEW_LIMIT))
+      refreshQuickFilterSelection()
       loadLatest().catch(() => {})
     }
     latestForm.addEventListener("submit", onLatestSubmit)
@@ -871,6 +1032,67 @@ export function createDataPage(options = {}) {
     }
     refreshAllButton.addEventListener("click", onRefreshAllClick)
     cleanups.push(() => refreshAllButton.removeEventListener("click", onRefreshAllClick))
+  }
+
+  if (latestRefreshButton) {
+    const onLatestRefreshClick = () => {
+      loadLatest().catch(() => {})
+    }
+    latestRefreshButton.addEventListener("click", onLatestRefreshClick)
+    cleanups.push(() => latestRefreshButton.removeEventListener("click", onLatestRefreshClick))
+  }
+
+  if (quickToSchedulerButton) {
+    const onQuickToSchedulerClick = () => {
+      if (typeof options.navigate === "function") {
+        options.navigate("scheduler")
+      } else if (typeof window !== "undefined") {
+        window.location.hash = "#/scheduler"
+      }
+      showToast("已跳转到创建任务，可继续补采数据。", {
+        tone: "info",
+      })
+    }
+    quickToSchedulerButton.addEventListener("click", onQuickToSchedulerClick)
+    cleanups.push(() =>
+      quickToSchedulerButton.removeEventListener("click", onQuickToSchedulerClick)
+    )
+  }
+
+  if (quickFilterResetButton) {
+    const onQuickFilterResetClick = () => {
+      state.latestQuery.platform = ""
+      state.latestQuery.fileType = ""
+      state.filesQuery.platform = ""
+      state.filesQuery.fileType = ""
+      state.filesQuery.page = 1
+      state.statsQuery.platform = ""
+      syncFormControls()
+      refreshQuickFilterSelection()
+      refreshAll().catch(() => {})
+    }
+    quickFilterResetButton.addEventListener("click", onQuickFilterResetClick)
+    cleanups.push(() =>
+      quickFilterResetButton.removeEventListener("click", onQuickFilterResetClick)
+    )
+  }
+
+  if (quickFilterButtons.length > 0) {
+    quickFilterButtons.forEach((button) => {
+      const onQuickFilterClick = () => {
+        state.latestQuery.platform = String(button.dataset.quickPlatform || "")
+        state.latestQuery.fileType = String(button.dataset.quickType || "")
+        state.filesQuery.platform = state.latestQuery.platform
+        state.filesQuery.fileType = state.latestQuery.fileType
+        state.filesQuery.page = 1
+        state.statsQuery.platform = state.latestQuery.platform
+        syncFormControls()
+        refreshQuickFilterSelection()
+        refreshAll().catch(() => {})
+      }
+      button.addEventListener("click", onQuickFilterClick)
+      cleanups.push(() => button.removeEventListener("click", onQuickFilterClick))
+    })
   }
 
   if (filesPrevButton) {
@@ -910,6 +1132,13 @@ export function createDataPage(options = {}) {
   }
 
   applyFiltersFromHash()
+  syncFormControls()
+  refreshQuickFilterSelection()
+  setLatestStatus({
+    tone: "neutral",
+    label: "等待加载",
+    message: "默认会自动拉取最新预览，也可使用快捷过滤直接切换。",
+  })
 
   if (options.autoLoad !== false) {
     refreshAll().catch(() => {})
@@ -917,7 +1146,7 @@ export function createDataPage(options = {}) {
 
   return {
     id: "data",
-    title: "Data Explorer",
+    title: "查看结果",
     root,
     refresh: refreshAll,
     destroy() {
@@ -940,7 +1169,7 @@ export function mountDataPage(container, options = {}) {
 
 export default {
   id: "data",
-  title: "Data Explorer",
+  title: "查看结果",
   create: createDataPage,
   mount: mountDataPage,
 }

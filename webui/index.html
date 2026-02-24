@@ -3,22 +3,21 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>EnergyCrawler UI 2.0</title>
+    <title>EnergyCrawler</title>
     <link rel="stylesheet" href="/ui/styles.css" />
   </head>
   <body>
     <div class="app" id="appRoot">
       <header class="topbar">
         <div class="brand">
-          <h1>EnergyCrawler UI 2.0</h1>
-          <p>配置 → 调度 → 运行 → 结果 → 诊断</p>
+          <h1>EnergyCrawler 用户任务中心</h1>
+          <p>任务流：开始使用 → 创建任务 → 运行监控 → 查看结果 → 系统设置</p>
         </div>
         <div class="topbar-actions">
-          <label class="api-base-field" for="apiBaseInput">
-            <span>API Base</span>
-            <input id="apiBaseInput" placeholder="默认同源（留空）" />
-          </label>
-          <button id="saveApiBaseBtn" type="button" class="secondary">保存</button>
+          <a class="topbar-action-link" href="#/data">优先查看最新结果</a>
+          <a class="topbar-action-link secondary" href="#/welcome">按步骤完成新手上手</a>
+          <a class="topbar-action-link secondary" href="#/settings">打开系统设置</a>
+          <p class="topbar-actions__hint">建议：先看结果；若暂无产出，再返回“创建任务”发起运行。</p>
         </div>
       </header>
 

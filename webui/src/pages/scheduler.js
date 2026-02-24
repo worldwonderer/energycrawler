@@ -28,6 +28,19 @@ const TEMPLATE_SENSITIVE_KEY_PATTERNS = [
   /session/i,
 ];
 
+const WIZARD_MIN_STEP = 1;
+const WIZARD_MAX_STEP = 3;
+
+const JOB_TYPE_LABELS = {
+  keyword: "关键词采集",
+  kol: "KOL 采集",
+};
+
+const PLATFORM_LABELS = {
+  xhs: "小红书",
+  x: "Twitter/X",
+};
+
 function ensurePageStyle() {
   if (document.getElementById(STYLE_LINK_ID)) return;
   const link = document.createElement("link");
@@ -301,22 +314,37 @@ export default async function renderSchedulerPage(mountEl, ctx = {}) {
     templates: [],
     loading: false,
     editingJobId: "",
+    currentStep: WIZARD_MIN_STEP,
+    activePrimaryTab: "create",
   };
 
   mountEl.innerHTML = `
     <section class="sr-page sr-scheduler-page">
       <header class="sr-header">
         <div>
-          <h2>Scheduler Studio</h2>
-          <p class="sr-muted">任务筛选、创建/编辑、clone、批量启停与 run-now。</p>
+          <h2>创建任务</h2>
+          <p class="sr-muted">先选任务类型，再填参数；列表与模板分区查看，避免信息混杂。</p>
         </div>
         <div class="sr-actions">
           <button type="button" class="secondary" data-action="refresh-jobs">刷新任务</button>
         </div>
       </header>
 
-      <section class="sr-card">
+      <nav class="sr-primary-tabs" aria-label="任务调度主视图">
+        <button type="button" data-action="switch-primary-tab" data-tab="create" data-role="primary-tab-btn">
+          创建任务
+        </button>
+        <button type="button" class="secondary" data-action="switch-primary-tab" data-tab="list" data-role="primary-tab-btn">
+          任务列表
+        </button>
+        <button type="button" class="secondary" data-action="switch-primary-tab" data-tab="templates" data-role="primary-tab-btn">
+          任务模板
+        </button>
+      </nav>
+
+      <section class="sr-card" data-role="pane-list">
         <h3 class="sr-card-title">任务列表</h3>
+        <p class="sr-muted">这里是“已创建任务”，可按类型过滤后再查看、启停、立即运行。</p>
         <div class="sr-controls sr-controls--jobs">
           <label class="sr-control">
             <span>关键字筛选</span>
@@ -348,6 +376,8 @@ export default async function renderSchedulerPage(mountEl, ctx = {}) {
           </label>
           <div class="sr-actions sr-controls-actions">
             <button type="button" class="secondary" data-action="clear-filters">清空筛选</button>
+            <button type="button" class="secondary" data-action="view-keyword-jobs">切到关键词列表</button>
+            <button type="button" class="secondary" data-action="view-kol-jobs">切到KOL列表</button>
             <button type="button" class="secondary" data-action="batch-enable">批量启用</button>
             <button type="button" class="secondary" data-action="batch-disable">批量停用</button>
           </div>
@@ -375,13 +405,22 @@ export default async function renderSchedulerPage(mountEl, ctx = {}) {
         <p class="sr-muted" data-role="jobs-meta">-</p>
       </section>
 
-      <section class="sr-card">
+      <section class="sr-card" data-role="pane-create">
         <div class="sr-card-headline">
           <h3 class="sr-card-title" data-role="form-title">创建任务</h3>
           <button type="button" class="secondary" data-action="reset-form">重置</button>
         </div>
 
-        <section class="sr-template-panel">
+        <div class="sr-create-type-tabs" data-role="create-type-tabs">
+          <button type="button" data-action="select-create-type" data-job-type="keyword" data-role="create-type-btn">
+            关键词采集
+          </button>
+          <button type="button" class="secondary" data-action="select-create-type" data-job-type="kol" data-role="create-type-btn">
+            KOL采集
+          </button>
+        </div>
+
+        <section class="sr-template-panel" data-role="template-panel">
           <div class="sr-template-headline">
             <h4>任务模板（按 job_type 分组）</h4>
             <p class="sr-muted" data-role="template-meta">-</p>
@@ -406,88 +445,214 @@ export default async function renderSchedulerPage(mountEl, ctx = {}) {
           <div class="sr-template-groups" data-role="template-groups"></div>
         </section>
 
-        <form data-role="job-form" class="sr-form-grid">
-          <label class="sr-control">
-            <span>名称</span>
-            <input type="text" name="name" required maxlength="120" placeholder="任务名称" />
-          </label>
-          <label class="sr-control">
-            <span>任务类型</span>
-            <select name="job_type" data-role="job-type" required>
-              <option value="keyword">keyword</option>
-              <option value="kol">kol</option>
-            </select>
-          </label>
-          <label class="sr-control">
-            <span>平台</span>
-            <select name="platform" data-role="platform" required>
-              <option value="xhs">xhs</option>
-              <option value="x">x</option>
-            </select>
-          </label>
-          <label class="sr-control">
-            <span>间隔分钟</span>
-            <input type="number" name="interval_minutes" min="5" max="10080" value="60" required />
-          </label>
+        <form data-role="job-form" class="sr-wizard-layout">
+          <div class="sr-wizard-main">
+            <ol class="sr-wizard-steps">
+              <li>
+                <button
+                  type="button"
+                  class="sr-wizard-step-btn"
+                  data-action="goto-step"
+                  data-step="1"
+                  data-role="wizard-step-btn"
+                >
+                  <span class="sr-wizard-step-index">步骤 1</span>
+                  <strong class="sr-wizard-step-label">任务类型</strong>
+                </button>
+              </li>
+              <li>
+                <button
+                  type="button"
+                  class="sr-wizard-step-btn"
+                  data-action="goto-step"
+                  data-step="2"
+                  data-role="wizard-step-btn"
+                >
+                  <span class="sr-wizard-step-index">步骤 2</span>
+                  <strong class="sr-wizard-step-label">必填参数</strong>
+                </button>
+              </li>
+              <li>
+                <button
+                  type="button"
+                  class="sr-wizard-step-btn"
+                  data-action="goto-step"
+                  data-step="3"
+                  data-role="wizard-step-btn"
+                >
+                  <span class="sr-wizard-step-index">步骤 3</span>
+                  <strong class="sr-wizard-step-label">确认启动</strong>
+                </button>
+              </li>
+            </ol>
 
-          <label class="sr-control sr-field-keywords" data-role="field-keywords">
-            <span>keywords</span>
-            <input type="text" name="keywords" placeholder="关键词，逗号分隔" />
-          </label>
-          <label class="sr-control sr-field-creator-ids sr-hidden" data-role="field-creator-ids">
-            <span>creator_ids</span>
-            <input type="text" name="creator_ids" placeholder="KOL ID，逗号分隔" />
-          </label>
+            <section class="sr-wizard-panel" data-role="wizard-step-panel" data-step="1">
+              <h4 class="sr-wizard-panel-title">步骤 1 / 3：选择任务类型</h4>
+              <p class="sr-muted">先确定任务来源，再进入参数填写。后续仍可返回调整。</p>
+              <div class="sr-form-grid sr-form-grid--wizard">
+                <label class="sr-control">
+                  <span>任务类型</span>
+                  <select name="job_type" data-role="job-type" required>
+                    <option value="keyword">keyword（关键词采集）</option>
+                    <option value="kol">kol（KOL 采集）</option>
+                  </select>
+                </label>
+                <label class="sr-control">
+                  <span>平台</span>
+                  <select name="platform" data-role="platform" required>
+                    <option value="xhs">xhs（小红书）</option>
+                    <option value="x">x（Twitter/X）</option>
+                  </select>
+                </label>
+              </div>
+            </section>
 
-          <label class="sr-control">
-            <span>save_option</span>
-            <select name="save_option" data-role="save-option"></select>
-          </label>
-          <label class="sr-control">
-            <span>safety_profile</span>
-            <select name="safety_profile" data-role="safety-profile">
-              <option value="">(空)</option>
-            </select>
-          </label>
-          <label class="sr-control">
-            <span>start_page</span>
-            <input type="number" name="start_page" min="1" value="1" />
-          </label>
-          <label class="sr-control">
-            <span>max_notes_count</span>
-            <input type="number" name="max_notes_count" min="1" max="200" placeholder="可选" />
-          </label>
-          <label class="sr-control">
-            <span>crawl_sleep_sec</span>
-            <input type="number" name="crawl_sleep_sec" min="0.1" max="120" step="0.1" placeholder="可选" />
-          </label>
+            <section class="sr-wizard-panel sr-hidden" data-role="wizard-step-panel" data-step="2">
+              <h4 class="sr-wizard-panel-title">步骤 2 / 3：填写必要参数</h4>
+              <p class="sr-muted">默认只展示必要字段。高级参数按需展开，避免新手被复杂项打断。</p>
 
-          <label class="sr-control sr-control--full">
-            <span>cookies（可选）</span>
-            <textarea name="cookies" rows="2" placeholder="可留空"></textarea>
-          </label>
+              <div class="sr-form-grid sr-form-grid--wizard">
+                <label class="sr-control">
+                  <span>任务名称</span>
+                  <input type="text" name="name" required maxlength="120" placeholder="例如：品牌词日常巡检" />
+                </label>
+                <label class="sr-control">
+                  <span>运行间隔（分钟）</span>
+                  <input type="number" name="interval_minutes" min="5" max="10080" value="60" required />
+                </label>
 
-          <div class="sr-switches sr-control--full">
-            <label><input type="checkbox" name="enabled" checked /> enabled</label>
-            <label><input type="checkbox" name="enable_comments" checked /> enable_comments</label>
-            <label><input type="checkbox" name="enable_sub_comments" /> enable_sub_comments</label>
-            <label><input type="checkbox" name="headless" /> headless</label>
+                <label class="sr-control sr-field-keywords" data-role="field-keywords">
+                  <span>关键词（keywords）</span>
+                  <input type="text" name="keywords" placeholder="多个关键词请用逗号分隔" />
+                </label>
+                <label class="sr-control sr-field-creator-ids sr-hidden" data-role="field-creator-ids">
+                  <span>KOL ID（creator_ids）</span>
+                  <input type="text" name="creator_ids" placeholder="多个 ID 请用逗号分隔" />
+                </label>
+              </div>
+
+              <details class="sr-advanced-details" data-role="advanced-details">
+                <summary>高级参数（可选）</summary>
+                <p class="sr-muted">
+                  这些参数会按原有 API 字段提交；未填写的选项保持默认值，不影响现有后端契约。
+                </p>
+                <div class="sr-form-grid sr-form-grid--wizard">
+                  <label class="sr-control">
+                    <span>save_option</span>
+                    <select name="save_option" data-role="save-option"></select>
+                  </label>
+                  <label class="sr-control">
+                    <span>safety_profile</span>
+                    <select name="safety_profile" data-role="safety-profile">
+                      <option value="">(空)</option>
+                    </select>
+                  </label>
+                  <label class="sr-control">
+                    <span>start_page</span>
+                    <input type="number" name="start_page" min="1" value="1" />
+                  </label>
+                  <label class="sr-control">
+                    <span>max_notes_count</span>
+                    <input type="number" name="max_notes_count" min="1" max="200" placeholder="可选" />
+                  </label>
+                  <label class="sr-control">
+                    <span>crawl_sleep_sec</span>
+                    <input
+                      type="number"
+                      name="crawl_sleep_sec"
+                      min="0.1"
+                      max="120"
+                      step="0.1"
+                      placeholder="可选"
+                    />
+                  </label>
+
+                  <label class="sr-control sr-control--full">
+                    <span>cookies（可选）</span>
+                    <textarea name="cookies" rows="2" placeholder="可留空"></textarea>
+                  </label>
+
+                  <div class="sr-switches sr-control--full">
+                    <label><input type="checkbox" name="enable_comments" checked /> enable_comments</label>
+                    <label><input type="checkbox" name="enable_sub_comments" /> enable_sub_comments</label>
+                    <label><input type="checkbox" name="headless" /> headless</label>
+                  </div>
+                </div>
+              </details>
+            </section>
+
+            <section class="sr-wizard-panel sr-hidden" data-role="wizard-step-panel" data-step="3">
+              <h4 class="sr-wizard-panel-title">步骤 3 / 3：确认并启动</h4>
+              <p class="sr-muted">请确认右侧摘要，确保“将创建什么任务”符合预期后再提交。</p>
+
+              <div class="sr-switches sr-control--full">
+                <label><input type="checkbox" name="enabled" checked /> 创建后立即启用（enabled）</label>
+              </div>
+              <p class="sr-muted">
+                提交后将调用现有 Scheduler API（创建或更新），不会改动后端接口契约。
+              </p>
+            </section>
+
+            <div class="sr-actions sr-control--full sr-wizard-nav">
+              <button type="button" class="secondary" data-action="wizard-prev" data-role="wizard-prev">
+                上一步
+              </button>
+              <button type="button" data-action="wizard-next" data-role="wizard-next">
+                下一步：必填参数
+              </button>
+              <button type="submit" data-role="submit-btn" class="sr-hidden">确认创建任务</button>
+              <button type="button" class="secondary" data-action="cancel-edit" data-role="cancel-edit" hidden>
+                取消编辑
+              </button>
+            </div>
           </div>
 
-          <div class="sr-actions sr-control--full">
-            <button type="submit" data-role="submit-btn">创建任务</button>
-            <button type="button" class="secondary" data-action="cancel-edit" data-role="cancel-edit" hidden>
-              取消编辑
-            </button>
-          </div>
+          <aside class="sr-wizard-summary">
+            <h4 class="sr-card-title">将创建什么任务</h4>
+            <p class="sr-muted" data-role="summary-note">请先完成步骤 1。</p>
+            <dl class="sr-summary-list">
+              <div>
+                <dt>任务名称</dt>
+                <dd data-role="summary-name">-</dd>
+              </div>
+              <div>
+                <dt>任务类型</dt>
+                <dd data-role="summary-job-type">-</dd>
+              </div>
+              <div>
+                <dt>平台</dt>
+                <dd data-role="summary-platform">-</dd>
+              </div>
+              <div>
+                <dt>采集目标</dt>
+                <dd data-role="summary-target">-</dd>
+              </div>
+              <div>
+                <dt>运行间隔</dt>
+                <dd data-role="summary-interval">-</dd>
+              </div>
+              <div>
+                <dt>提交动作</dt>
+                <dd data-role="summary-submit-action">创建并启用</dd>
+              </div>
+              <div>
+                <dt>高级参数</dt>
+                <dd data-role="summary-advanced">默认配置</dd>
+              </div>
+            </dl>
+          </aside>
         </form>
       </section>
     </section>
   `;
 
   const refs = {
+    primaryTabButtons: Array.from(mountEl.querySelectorAll('[data-role="primary-tab-btn"]')),
+    paneList: mountEl.querySelector('[data-role="pane-list"]'),
+    paneCreate: mountEl.querySelector('[data-role="pane-create"]'),
     jobsBody: mountEl.querySelector('[data-role="jobs-body"]'),
     jobsMeta: mountEl.querySelector('[data-role="jobs-meta"]'),
+    jobsTableWrap: mountEl.querySelector(".sr-table-wrap"),
     selectAll: mountEl.querySelector('[data-role="select-all"]'),
     filterQuery: mountEl.querySelector('[data-role="filter-query"]'),
     filterJobType: mountEl.querySelector('[data-role="filter-job-type"]'),
@@ -501,9 +666,25 @@ export default async function renderSchedulerPage(mountEl, ctx = {}) {
     fieldCreatorIds: mountEl.querySelector('[data-role="field-creator-ids"]'),
     saveOption: mountEl.querySelector('[data-role="save-option"]'),
     safetyProfile: mountEl.querySelector('[data-role="safety-profile"]'),
+    createTypeTabs: mountEl.querySelector('[data-role="create-type-tabs"]'),
+    createTypeButtons: Array.from(mountEl.querySelectorAll('[data-role="create-type-btn"]')),
+    templatePanel: mountEl.querySelector('[data-role="template-panel"]'),
     templateMeta: mountEl.querySelector('[data-role="template-meta"]'),
     templateName: mountEl.querySelector('[data-role="template-name"]'),
     templateGroups: mountEl.querySelector('[data-role="template-groups"]'),
+    wizardPanels: Array.from(mountEl.querySelectorAll('[data-role="wizard-step-panel"]')),
+    wizardStepButtons: Array.from(mountEl.querySelectorAll('[data-role="wizard-step-btn"]')),
+    wizardPrevBtn: mountEl.querySelector('[data-role="wizard-prev"]'),
+    wizardNextBtn: mountEl.querySelector('[data-role="wizard-next"]'),
+    advancedDetails: mountEl.querySelector('[data-role="advanced-details"]'),
+    summaryNote: mountEl.querySelector('[data-role="summary-note"]'),
+    summaryName: mountEl.querySelector('[data-role="summary-name"]'),
+    summaryJobType: mountEl.querySelector('[data-role="summary-job-type"]'),
+    summaryPlatform: mountEl.querySelector('[data-role="summary-platform"]'),
+    summaryTarget: mountEl.querySelector('[data-role="summary-target"]'),
+    summaryInterval: mountEl.querySelector('[data-role="summary-interval"]'),
+    summarySubmitAction: mountEl.querySelector('[data-role="summary-submit-action"]'),
+    summaryAdvanced: mountEl.querySelector('[data-role="summary-advanced"]'),
     submitBtn: mountEl.querySelector('[data-role="submit-btn"]'),
     cancelEditBtn: mountEl.querySelector('[data-role="cancel-edit"]'),
     refreshBtn: mountEl.querySelector('[data-action="refresh-jobs"]'),
@@ -518,10 +699,202 @@ export default async function renderSchedulerPage(mountEl, ctx = {}) {
     console.log(`[scheduler] ${message}`);
   }
 
+  function syncCreateTypeButtonDisabledState() {
+    refs.createTypeButtons.forEach((button) => {
+      button.disabled = state.loading || Boolean(state.editingJobId);
+    });
+  }
+
   function setLoading(isLoading) {
     state.loading = isLoading;
     if (refs.refreshBtn) refs.refreshBtn.disabled = isLoading;
     if (refs.submitBtn) refs.submitBtn.disabled = isLoading;
+    if (refs.wizardPrevBtn) refs.wizardPrevBtn.disabled = isLoading;
+    if (refs.wizardNextBtn) refs.wizardNextBtn.disabled = isLoading;
+    refs.primaryTabButtons.forEach((button) => {
+      button.disabled = isLoading;
+    });
+    syncCreateTypeButtonDisabledState();
+    refs.wizardStepButtons.forEach((button) => {
+      button.disabled = isLoading;
+    });
+  }
+
+  function clampWizardStep(step) {
+    if (!Number.isFinite(step)) return WIZARD_MIN_STEP;
+    return Math.min(WIZARD_MAX_STEP, Math.max(WIZARD_MIN_STEP, Math.trunc(step)));
+  }
+
+  function resolveSubmitJobType(formData) {
+    if (state.editingJobId) {
+      return (
+        state.jobs.find((item) => item.job_id === state.editingJobId)?.job_type ||
+        String(refs.jobTypeSelect?.value || "keyword")
+      );
+    }
+    return String(formData?.get("job_type") || refs.jobTypeSelect?.value || "keyword");
+  }
+
+  function summarizeTarget(jobType, elements) {
+    const normalizedType = normalizeTemplateJobType(jobType);
+    const rawValue =
+      normalizedType === "kol"
+        ? String(elements.creator_ids?.value || "")
+        : String(elements.keywords?.value || "");
+    const items = parseCommaSeparatedItems(rawValue);
+    if (items.length === 0) {
+      return normalizedType === "kol" ? "待填写 creator_ids" : "待填写 keywords";
+    }
+    const preview = items.slice(0, 3).join("、");
+    return items.length > 3 ? `${preview} 等 ${items.length} 项` : preview;
+  }
+
+  function summarizeAdvancedOptions(elements) {
+    const pieces = [];
+    const saveOption = String(elements.save_option?.value || "json");
+    const safetyProfile = String(elements.safety_profile?.value || "");
+    const startPageValue = Number(elements.start_page?.value || 1);
+    const maxNotesCount = String(elements.max_notes_count?.value || "").trim();
+    const crawlSleepSec = String(elements.crawl_sleep_sec?.value || "").trim();
+    const hasCookies = String(elements.cookies?.value || "").trim().length > 0;
+    const enableComments = Boolean(elements.enable_comments?.checked);
+    const enableSubComments = Boolean(elements.enable_sub_comments?.checked);
+    const headless = Boolean(elements.headless?.checked);
+
+    if (saveOption && saveOption !== "json") pieces.push(`save_option=${saveOption}`);
+    if (safetyProfile) pieces.push(`safety_profile=${safetyProfile}`);
+    if (Number.isFinite(startPageValue) && startPageValue > 1) pieces.push(`start_page=${startPageValue}`);
+    if (maxNotesCount) pieces.push(`max_notes_count=${maxNotesCount}`);
+    if (crawlSleepSec) pieces.push(`crawl_sleep_sec=${crawlSleepSec}`);
+    if (hasCookies) pieces.push("cookies=已填写");
+    if (!enableComments) pieces.push("关闭评论采集");
+    if (enableSubComments) pieces.push("启用子评论");
+    if (headless) pieces.push("headless");
+
+    return pieces.length > 0 ? pieces.join("，") : "默认配置";
+  }
+
+  function updateCreateSummary() {
+    if (!refs.jobForm) return;
+
+    const { elements } = refs.jobForm;
+    const jobType = normalizeTemplateJobType(resolveSubmitJobType());
+    const platform = String(elements.platform?.value || "xhs");
+    const name = String(elements.name?.value || "").trim();
+    const intervalMinutes = Number(elements.interval_minutes?.value || 0);
+    const enabled = Boolean(elements.enabled?.checked);
+
+    if (refs.summaryName) refs.summaryName.textContent = name || "待填写";
+    if (refs.summaryJobType) {
+      refs.summaryJobType.textContent = JOB_TYPE_LABELS[jobType] || jobType.toUpperCase();
+    }
+    if (refs.summaryPlatform) {
+      refs.summaryPlatform.textContent = PLATFORM_LABELS[platform] || platform || "-";
+    }
+    if (refs.summaryTarget) {
+      refs.summaryTarget.textContent = summarizeTarget(jobType, elements);
+    }
+    if (refs.summaryInterval) {
+      refs.summaryInterval.textContent =
+        Number.isInteger(intervalMinutes) && intervalMinutes > 0 ? `${intervalMinutes} 分钟` : "待填写";
+    }
+    if (refs.summarySubmitAction) {
+      if (state.editingJobId) {
+        refs.summarySubmitAction.textContent = enabled ? "保存修改并保持启用" : "保存修改并停用";
+      } else {
+        refs.summarySubmitAction.textContent = enabled ? "创建并启用" : "创建但先不启用";
+      }
+    }
+    if (refs.summaryAdvanced) {
+      refs.summaryAdvanced.textContent = summarizeAdvancedOptions(elements);
+    }
+    if (refs.summaryNote) {
+      const stepHint =
+        state.currentStep === 1
+          ? "当前在步骤 1：先选择任务类型。"
+          : state.currentStep === 2
+            ? "当前在步骤 2：填写必填参数，可按需展开高级参数。"
+            : "当前在步骤 3：确认摘要后提交任务。";
+      refs.summaryNote.textContent = state.editingJobId ? `编辑模式：${stepHint}` : stepHint;
+    }
+  }
+
+  function validateWizardStep(step) {
+    if (step === 1) {
+      const jobType = String(refs.jobTypeSelect?.value || "").trim();
+      const platform = String(refs.platformSelect?.value || "").trim();
+      if (!jobType) return "请选择任务类型";
+      if (!platform) return "请选择平台";
+      return "";
+    }
+
+    if (step === 2) {
+      const formData = new FormData(refs.jobForm);
+      const jobType = resolveSubmitJobType(formData);
+      try {
+        return runSubmitPrecheck(formData, jobType);
+      } catch (error) {
+        return error?.message || "表单字段格式不正确";
+      }
+    }
+
+    return "";
+  }
+
+  function renderWizardStep() {
+    state.currentStep = clampWizardStep(state.currentStep);
+
+    refs.wizardPanels.forEach((panel) => {
+      const step = Number(panel.dataset.step || WIZARD_MIN_STEP);
+      panel.classList.toggle("sr-hidden", step !== state.currentStep);
+    });
+
+    refs.wizardStepButtons.forEach((button) => {
+      const step = Number(button.dataset.step || WIZARD_MIN_STEP);
+      button.classList.toggle("is-current", step === state.currentStep);
+      button.classList.toggle("is-completed", step < state.currentStep);
+      button.setAttribute("aria-current", step === state.currentStep ? "step" : "false");
+    });
+
+    if (refs.wizardPrevBtn) refs.wizardPrevBtn.hidden = state.currentStep <= WIZARD_MIN_STEP;
+    if (refs.wizardNextBtn) {
+      refs.wizardNextBtn.hidden = state.currentStep >= WIZARD_MAX_STEP;
+      if (state.currentStep === 1) refs.wizardNextBtn.textContent = "下一步：必填参数";
+      else if (state.currentStep === 2) refs.wizardNextBtn.textContent = "下一步：确认启动";
+      else refs.wizardNextBtn.textContent = "下一步";
+    }
+
+    if (refs.submitBtn) {
+      refs.submitBtn.classList.toggle("sr-hidden", state.currentStep !== WIZARD_MAX_STEP);
+      refs.submitBtn.textContent = state.editingJobId ? "确认保存修改" : "确认创建任务";
+    }
+  }
+
+  function goToWizardStep(nextStep, { force = false } = {}) {
+    const targetStep = clampWizardStep(nextStep);
+    if (targetStep === state.currentStep) {
+      renderWizardStep();
+      updateCreateSummary();
+      return true;
+    }
+
+    if (!force && targetStep > state.currentStep) {
+      for (let step = state.currentStep; step < targetStep; step += 1) {
+        const errorMessage = validateWizardStep(step);
+        if (errorMessage) {
+          toast(`步骤 ${step} 校验失败：${errorMessage}`, {
+            tone: "error",
+            title: "创建任务向导",
+          });
+          return false;
+        }
+      }
+    }
+
+    state.currentStep = targetStep;
+    renderWizardStep();
+    updateCreateSummary();
+    return true;
   }
 
   function getFilteredJobs() {
@@ -553,10 +926,130 @@ export default async function renderSchedulerPage(mountEl, ctx = {}) {
     });
   }
 
-  function updateJobTypeVisibility() {
-    const isKol = String(refs.jobTypeSelect?.value || "") === "kol";
+  function getJobTypeDisplayLabel(jobType) {
+    const normalizedType = normalizeTemplateJobType(jobType);
+    return JOB_TYPE_LABELS[normalizedType] || normalizedType.toUpperCase();
+  }
+
+  function focusJobRow(jobId) {
+    const row = Array.from(refs.jobsBody.querySelectorAll("tr.sr-row")).find(
+      (node) => node.dataset.jobId === String(jobId || "")
+    );
+    if (!row) return false;
+
+    row.classList.add("is-focused");
+    row.scrollIntoView({ block: "center", behavior: "smooth" });
+    window.setTimeout(() => {
+      row.classList.remove("is-focused");
+    }, 1400);
+    return true;
+  }
+
+  function normalizePrimaryTab(rawValue) {
+    const value = String(rawValue || "create")
+      .trim()
+      .toLowerCase();
+    if (value === "list" || value === "templates") return value;
+    return "create";
+  }
+
+  function setActivePrimaryTab(nextTab, { focusPane = false } = {}) {
+    const tab = normalizePrimaryTab(nextTab);
+    state.activePrimaryTab = tab;
+
+    refs.primaryTabButtons.forEach((button) => {
+      const isActive = String(button.dataset.tab || "") === tab;
+      button.classList.toggle("is-active", isActive);
+      button.classList.toggle("secondary", !isActive);
+      button.setAttribute("aria-current", isActive ? "page" : "false");
+    });
+
+    const isListTab = tab === "list";
+    const isTemplateTab = tab === "templates";
+
+    refs.paneList?.classList.toggle("sr-hidden", !isListTab);
+    refs.paneCreate?.classList.toggle("sr-hidden", isListTab);
+    refs.templatePanel?.classList.toggle("sr-hidden", !isTemplateTab);
+    refs.jobForm?.classList.toggle("sr-hidden", isTemplateTab);
+    refs.createTypeTabs?.classList.toggle("sr-hidden", isTemplateTab);
+
+    if (!isTemplateTab && refs.templateName) refs.templateName.value = "";
+
+    if (focusPane) {
+      if (isListTab) {
+        refs.paneList?.scrollIntoView({ block: "start", behavior: "smooth" });
+      } else {
+        refs.paneCreate?.scrollIntoView({ block: "start", behavior: "smooth" });
+      }
+    }
+  }
+
+  function syncCreateTypeButtons(jobType) {
+    refs.createTypeButtons.forEach((button) => {
+      const isActive = normalizeTemplateJobType(button.dataset.jobType) === jobType;
+      button.classList.toggle("is-active", isActive);
+      button.classList.toggle("secondary", !isActive);
+      button.setAttribute("aria-pressed", isActive ? "true" : "false");
+    });
+  }
+
+  function applyJobTypeQuickView(jobType, { focusJobId = "" } = {}) {
+    const normalizedType = normalizeTemplateJobType(jobType);
+    setActivePrimaryTab("list", { focusPane: true });
+    refs.filterJobType.value = normalizedType;
+    if (!focusJobId) refs.filterQuery.value = "";
+    if (focusJobId) {
+      refs.filterQuery.value = String(focusJobId || "");
+    }
+    renderJobsTable();
+
+    const filteredJobs = getFilteredJobs();
+    const label = getJobTypeDisplayLabel(normalizedType);
+    if (filteredJobs.length === 0) {
+      toast(`当前没有匹配的${label}任务，可先创建或调整筛选条件`, {
+        tone: "warning",
+        title: "任务查看",
+      });
+      return;
+    }
+
+    if (focusJobId && !focusJobRow(focusJobId)) {
+      toast(`已切换到${label}筛选，共 ${filteredJobs.length} 个任务`, {
+        tone: "info",
+        title: "任务查看",
+      });
+      return;
+    }
+
+    if (focusJobId) {
+      toast(`已定位${label}：${focusJobId}`, {
+        tone: "success",
+        title: "任务查看",
+      });
+      return;
+    }
+
+    refs.jobsTableWrap?.scrollIntoView({ block: "start", behavior: "smooth" });
+    toast(`已切换到${label}，共 ${filteredJobs.length} 个任务`, {
+      tone: "info",
+      title: "任务查看",
+    });
+  }
+
+  function updateJobTypeVisibility(forcedJobType = "") {
+    const resolvedJobType = normalizeTemplateJobType(forcedJobType || refs.jobTypeSelect?.value || "keyword");
+    const isKol = resolvedJobType === "kol";
     refs.fieldKeywords?.classList.toggle("sr-hidden", isKol);
     refs.fieldCreatorIds?.classList.toggle("sr-hidden", !isKol);
+    syncCreateTypeButtons(resolvedJobType);
+  }
+
+  function setCreateJobType(jobType, { syncSelect = true } = {}) {
+    const normalizedType = normalizeTemplateJobType(jobType);
+    if (syncSelect && refs.jobTypeSelect) refs.jobTypeSelect.value = normalizedType;
+    updateJobTypeVisibility(normalizedType);
+    renderTemplateGroups();
+    updateCreateSummary();
   }
 
   function readCurrentFormSnapshot() {
@@ -613,7 +1106,7 @@ export default async function renderSchedulerPage(mountEl, ctx = {}) {
     elements.enable_sub_comments.checked = Boolean(snapshot?.enable_sub_comments);
     elements.headless.checked = Boolean(snapshot?.headless);
 
-    updateJobTypeVisibility();
+    setCreateJobType(nextJobType, { syncSelect: !state.editingJobId });
   }
 
   function getTemplateGroups() {
@@ -777,6 +1270,9 @@ export default async function renderSchedulerPage(mountEl, ctx = {}) {
     applyFormSnapshot(sanitizeTemplateSnapshot(template.snapshot || {}), template.job_type);
     if (refs.templateName) refs.templateName.value = template.name;
     renderTemplateGroups();
+    if (state.activePrimaryTab === "templates") {
+      setActivePrimaryTab("create", { focusPane: true });
+    }
     toast(`已应用模板：${template.name}`, { tone: "success", title: "模板" });
   }
 
@@ -823,7 +1319,9 @@ export default async function renderSchedulerPage(mountEl, ctx = {}) {
     } else {
       filteredJobs.forEach((job) => {
         const tr = createElement("tr", "sr-row");
+        tr.dataset.jobId = String(job.job_id || "");
         if (!job.enabled) tr.classList.add("is-disabled");
+        if (state.selectedJobIds.has(job.job_id)) tr.classList.add("is-selected");
 
         const selectTd = createElement("td");
         const checkbox = createElement("input");
@@ -858,6 +1356,10 @@ export default async function renderSchedulerPage(mountEl, ctx = {}) {
         const ops = createElement("div", "sr-row-actions");
 
         const actions = [
+          {
+            key: "view-job",
+            label: job.job_type === "kol" ? "查看KOL" : "查看关键词",
+          },
           { key: "run-now", label: "run-now" },
           { key: "edit", label: "编辑" },
           { key: "clone", label: "clone" },
@@ -888,8 +1390,8 @@ export default async function renderSchedulerPage(mountEl, ctx = {}) {
   function setEditingJob(job) {
     if (!job) {
       state.editingJobId = "";
-      refs.formTitle.textContent = "创建任务";
-      refs.submitBtn.textContent = "创建任务";
+      state.currentStep = WIZARD_MIN_STEP;
+      refs.formTitle.textContent = "创建任务向导";
       refs.cancelEditBtn.hidden = true;
       refs.jobTypeSelect.disabled = false;
       refs.platformSelect.disabled = false;
@@ -902,17 +1404,20 @@ export default async function renderSchedulerPage(mountEl, ctx = {}) {
       refs.jobForm.elements.headless.checked = false;
       refs.jobForm.elements.save_option.value = refs.jobForm.elements.save_option.value || "json";
       refs.jobForm.elements.safety_profile.value = "";
+      if (refs.advancedDetails) refs.advancedDetails.open = false;
       if (refs.templateName) refs.templateName.value = "";
-      updateJobTypeVisibility();
-      renderTemplateGroups();
+      setActivePrimaryTab("create");
+      setCreateJobType(refs.jobForm.elements.job_type.value || "keyword", { syncSelect: true });
+      renderWizardStep();
+      syncCreateTypeButtonDisabledState();
       return;
     }
 
     state.editingJobId = String(job.job_id || "");
+    state.currentStep = 2;
     const payload = job.payload || {};
 
     refs.formTitle.textContent = `编辑任务：${job.job_id}`;
-    refs.submitBtn.textContent = "保存修改";
     refs.cancelEditBtn.hidden = false;
 
     refs.jobForm.elements.name.value = job.name || "";
@@ -941,8 +1446,23 @@ export default async function renderSchedulerPage(mountEl, ctx = {}) {
 
     refs.jobTypeSelect.disabled = true;
     refs.platformSelect.disabled = true;
-    updateJobTypeVisibility();
-    renderTemplateGroups();
+    if (refs.advancedDetails) {
+      const hasAdvancedOptions =
+        String(payload.save_option || "json") !== "json" ||
+        Boolean(payload.safety_profile) ||
+        Number(payload.start_page || 1) > 1 ||
+        (payload.max_notes_count !== null && payload.max_notes_count !== undefined) ||
+        (payload.crawl_sleep_sec !== null && payload.crawl_sleep_sec !== undefined) ||
+        String(payload.cookies || "").trim().length > 0 ||
+        payload.enable_comments === false ||
+        Boolean(payload.enable_sub_comments) ||
+        Boolean(payload.headless);
+      refs.advancedDetails.open = hasAdvancedOptions;
+    }
+    setActivePrimaryTab("create");
+    setCreateJobType(job.job_type || "keyword", { syncSelect: false });
+    renderWizardStep();
+    syncCreateTypeButtonDisabledState();
   }
 
   async function loadConfigOptions() {
@@ -976,6 +1496,8 @@ export default async function renderSchedulerPage(mountEl, ctx = {}) {
       opt.textContent = option.label || option.value;
       refs.safetyProfile.appendChild(opt);
     });
+
+    updateCreateSummary();
   }
 
   async function loadJobs() {
@@ -1050,10 +1572,19 @@ export default async function renderSchedulerPage(mountEl, ctx = {}) {
   async function submitJobForm(event) {
     event.preventDefault();
 
+    if (state.currentStep < WIZARD_MAX_STEP) {
+      const moved = goToWizardStep(state.currentStep + 1);
+      if (moved) {
+        toast("请先完成向导最后一步确认，再提交任务", {
+          tone: "info",
+          title: "创建任务向导",
+        });
+      }
+      return;
+    }
+
     const formData = new FormData(refs.jobForm);
-    const jobType = state.editingJobId
-      ? state.jobs.find((item) => item.job_id === state.editingJobId)?.job_type || "keyword"
-      : String(formData.get("job_type") || "keyword");
+    const jobType = resolveSubmitJobType(formData);
 
     let precheckError = "";
     try {
@@ -1090,7 +1621,7 @@ export default async function renderSchedulerPage(mountEl, ctx = {}) {
       if (!state.editingJobId) {
         await api.post("/api/scheduler/jobs", {
           ...requestBody,
-          job_type: String(formData.get("job_type") || "keyword"),
+          job_type: String(formData.get("job_type") || refs.jobTypeSelect?.value || "keyword"),
           platform: String(formData.get("platform") || "xhs"),
         });
         toast("任务创建成功", { tone: "success", title: "Scheduler" });
@@ -1118,6 +1649,42 @@ export default async function renderSchedulerPage(mountEl, ctx = {}) {
     const action = trigger.dataset.action;
 
     try {
+      if (action === "switch-primary-tab") {
+        setActivePrimaryTab(trigger.dataset.tab || "create", { focusPane: true });
+        return;
+      }
+
+      if (action === "select-create-type") {
+        const nextType = normalizeTemplateJobType(trigger.dataset.jobType || "keyword");
+        const currentType = normalizeTemplateJobType(refs.jobTypeSelect?.value || "keyword");
+        if (state.editingJobId && nextType !== currentType) {
+          toast("编辑模式下不可切换任务类型，如需切换请先取消编辑。", {
+            tone: "warning",
+            title: "创建任务",
+          });
+          return;
+        }
+        setActivePrimaryTab("create", { focusPane: true });
+        setCreateJobType(nextType, { syncSelect: true });
+        return;
+      }
+
+      if (action === "wizard-prev") {
+        goToWizardStep(state.currentStep - 1, { force: true });
+        return;
+      }
+
+      if (action === "wizard-next") {
+        goToWizardStep(state.currentStep + 1);
+        return;
+      }
+
+      if (action === "goto-step") {
+        const targetStep = Number(trigger.dataset.step || WIZARD_MIN_STEP);
+        goToWizardStep(targetStep, { force: targetStep < state.currentStep });
+        return;
+      }
+
       if (action === "refresh-jobs") {
         await loadJobs();
         return;
@@ -1129,6 +1696,16 @@ export default async function renderSchedulerPage(mountEl, ctx = {}) {
         refs.filterPlatform.value = "";
         refs.filterEnabled.value = "all";
         renderJobsTable();
+        return;
+      }
+
+      if (action === "view-keyword-jobs") {
+        applyJobTypeQuickView("keyword");
+        return;
+      }
+
+      if (action === "view-kol-jobs") {
+        applyJobTypeQuickView("kol");
         return;
       }
 
@@ -1171,7 +1748,19 @@ export default async function renderSchedulerPage(mountEl, ctx = {}) {
       if (!jobId) return;
 
       const job = state.jobs.find((item) => item.job_id === jobId);
-      if (!job) return;
+      if (!job) {
+        toast(`任务 ${jobId} 不存在或已更新，请刷新后重试`, {
+          tone: "warning",
+          title: "Scheduler",
+        });
+        await loadJobs();
+        return;
+      }
+
+      if (action === "view-job") {
+        applyJobTypeQuickView(job.job_type, { focusJobId: job.job_id });
+        return;
+      }
 
       if (action === "run-now") {
         await triggerRunNow(jobId);
@@ -1206,8 +1795,7 @@ export default async function renderSchedulerPage(mountEl, ctx = {}) {
     if (!(target instanceof HTMLElement)) return;
 
     if (target.matches('[data-role="job-type"]')) {
-      updateJobTypeVisibility();
-      renderTemplateGroups();
+      setCreateJobType(refs.jobTypeSelect?.value || "keyword", { syncSelect: false });
       return;
     }
 
@@ -1237,9 +1825,25 @@ export default async function renderSchedulerPage(mountEl, ctx = {}) {
       target.matches('[data-role="filter-enabled"]')
     ) {
       renderJobsTable();
+      return;
+    }
+
+    if (refs.jobForm.contains(target)) {
+      updateCreateSummary();
     }
   });
 
+  mountEl.addEventListener("input", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    if (target.matches('[data-role="filter-query"]')) {
+      renderJobsTable();
+    }
+  });
+
+  refs.jobForm.addEventListener("input", () => {
+    updateCreateSummary();
+  });
   refs.jobForm.addEventListener("submit", submitJobForm);
 
   await loadConfigOptions();

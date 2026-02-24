@@ -328,8 +328,8 @@ export function mountSettingsPage(target, options = {}) {
     <section class="runtime-settings-page settings-page">
       <header class="rs-header">
         <div class="rs-header-copy">
-          <h2>Settings</h2>
-          <p>管理 API Base、自动刷新策略，并查看 /api/config 摘要。</p>
+          <h2>系统设置（主入口）</h2>
+          <p>统一管理连接地址、鉴权相关配置与页面偏好。</p>
         </div>
         <div class="rs-header-actions">
           <button type="button" class="secondary" data-role="reload-config-btn">刷新 /api/config</button>
@@ -337,11 +337,15 @@ export function mountSettingsPage(target, options = {}) {
         </div>
       </header>
 
+      <section class="rs-inline-note" data-tone="info">
+        建议在本页完成连接地址、登录配置和自动刷新等核心设置。
+      </section>
+
       <section class="rs-panel rs-panel--preferences">
-        <h3>UI 偏好设置（持久化）</h3>
+        <h3>连接与页面偏好</h3>
         <form class="settings-form" data-role="settings-form" autocomplete="off">
           <label class="rs-field">
-            <span>API Base</span>
+            <span>API 地址</span>
             <input
               type="text"
               name="apiBase"
@@ -353,7 +357,7 @@ export function mountSettingsPage(target, options = {}) {
 
           <label class="rs-field rs-field-inline">
             <input type="checkbox" name="autoRefreshEnabled" data-role="auto-refresh-enabled-input" />
-            <span>启用 Runtime 页面自动刷新</span>
+            <span>启用运行页自动刷新</span>
           </label>
 
           <label class="rs-field">
@@ -380,12 +384,12 @@ export function mountSettingsPage(target, options = {}) {
       </section>
 
       <section class="rs-panel rs-panel--diagnostics">
-        <h3>CookieCloud 诊断摘要</h3>
+        <h3>登录同步（CookieCloud）摘要</h3>
         <div class="rs-inline-note" data-role="cookiecloud-summary" data-tone="info">等待 /api/config ...</div>
       </section>
 
       <section class="rs-panel rs-panel--summary">
-        <h3>/api/config 摘要</h3>
+        <h3>系统配置摘要</h3>
         <div class="rs-config-summary" data-role="config-summary-grid">
           <div class="rs-inline-note rs-empty-state" data-tone="warning">尚未加载配置摘要</div>
         </div>
@@ -592,7 +596,7 @@ export function mountSettingsPage(target, options = {}) {
 
 const settingsPage = {
   id: "settings",
-  title: "Settings",
+  title: "系统设置",
   mount: mountSettingsPage,
 };
 

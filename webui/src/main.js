@@ -1,5 +1,5 @@
 import { AppShell, DEFAULT_ROUTES } from "./app-shell.js";
-import { getApiBase, setApiBase, setApiErrorHandler } from "./lib/api.js";
+import { setApiErrorHandler } from "./lib/api.js";
 
 const navEl = document.getElementById("moduleNav");
 const viewEl = document.getElementById("routeView");
@@ -15,31 +15,6 @@ const shell = new AppShell({
   toastViewport,
   routes: DEFAULT_ROUTES,
 });
-
-function bindApiBaseSettings() {
-  const input = document.getElementById("apiBaseInput");
-  const saveBtn = document.getElementById("saveApiBaseBtn");
-  if (!input || !saveBtn) return;
-
-  input.value = getApiBase();
-
-  const save = () => {
-    const value = setApiBase(input.value);
-    const target = value || "(同源)";
-    shell.showToast(`API Base 已保存：${target}`, {
-      tone: "success",
-      title: "配置已更新",
-    });
-  };
-
-  saveBtn.addEventListener("click", save);
-  input.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      save();
-    }
-  });
-}
 
 function bindGlobalErrorSurface() {
   setApiErrorHandler((message) => {
@@ -70,7 +45,6 @@ function bindGlobalErrorSurface() {
   });
 }
 
-bindApiBaseSettings();
 bindGlobalErrorSurface();
 shell.start();
 

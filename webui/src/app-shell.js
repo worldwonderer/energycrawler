@@ -2,69 +2,57 @@ import { formatDateTime } from "./lib/time.js";
 
 export const ONBOARDING_COMPLETED_STORAGE_KEY = "energycrawler_ui_onboarding_completed_at";
 const FIRST_RUN_ROUTE_ID = "welcome";
-const DEFAULT_ROUTE_ID = "dashboard";
+const DEFAULT_ROUTE_ID = "welcome";
 
 export const DEFAULT_ROUTES = [
   {
     id: "welcome",
-    label: "Welcome",
+    label: "开始使用",
     hash: "#/welcome",
-    title: "Welcome / Onboarding",
+    title: "开始使用",
     modulePath: "./pages/welcome.js",
-    description: "新手引导：环境健康、鉴权状态、Demo 运行与数据浏览。",
-    showInNav: false,
-  },
-  {
-    id: "dashboard",
-    label: "Dashboard",
-    hash: "#/dashboard",
-    title: "Dashboard",
-    modulePath: "./pages/dashboard.js",
-    description: "系统总览、关键指标、健康状态。",
+    description: "按步骤完成连接检查、登录准备并创建首个任务。",
+    navHint: "3 步完成首次上手",
   },
   {
     id: "scheduler",
-    label: "Scheduler",
+    label: "创建任务",
     hash: "#/scheduler",
-    title: "Scheduler Studio",
+    title: "创建任务",
     modulePath: "./pages/scheduler.js",
-    description: "任务配置、批量管理与模板操作。",
+    description: "选择任务类型并填写必要参数，快速发起任务。",
+    navHint: "填写参数并立即发起",
   },
   {
     id: "runs",
-    label: "Runs",
+    label: "运行监控",
     hash: "#/runs",
-    title: "Run Center",
+    title: "运行监控",
     modulePath: "./pages/runs.js",
-    description: "运行状态、日志时间线与重试入口。",
+    description: "先看状态结论，再查看日志明细与下一步建议。",
+    navHint: "先看结论再查日志",
   },
   {
     id: "data",
-    label: "Data",
+    label: "查看结果",
     hash: "#/data",
-    title: "Data Explorer",
+    title: "查看结果",
     modulePath: "./pages/data.js",
-    description: "结果浏览、检索、导出与统计。",
-  },
-  {
-    id: "runtime",
-    label: "Runtime",
-    hash: "#/runtime",
-    title: "Runtime & Auth",
-    modulePath: "./pages/runtime.js",
-    description: "运行时状态、登录态与诊断建议。",
+    description: "优先浏览最新结果，再按条件筛选、导出与统计。",
+    navHint: "默认先看最新结果",
   },
   {
     id: "settings",
-    label: "Settings",
+    label: "系统设置",
     hash: "#/settings",
-    title: "Settings",
+    title: "系统设置",
     modulePath: "./pages/settings.js",
-    description: "系统偏好、配置导入导出与环境切换。",
+    description: "统一管理连接、鉴权、偏好与环境配置。",
+    navHint: "统一管理连接与偏好",
   },
 ];
 
-function normalizeHash(hash, fallbackHash = "#/dashboard") {
+function normalizeHash(hash, fallbackHash = "#/welcome") {
   if (!hash || hash === "#") return fallbackHash;
   if (hash.startsWith("#/")) return hash;
   if (hash.startsWith("#")) return `#/${hash.slice(1)}`;
@@ -172,7 +160,7 @@ export class AppShell {
   }
 
   resolveCurrentRoute() {
-    const defaultHash = this.routeMap.get(this.defaultRouteId)?.hash || "#/dashboard";
+    const defaultHash = this.routeMap.get(this.defaultRouteId)?.hash || "#/welcome";
     const normalized = normalizeHash(window.location.hash, defaultHash);
     const routeId = normalized.replace(/^#\//, "").split("?")[0] || this.defaultRouteId;
     return this.routeMap.get(routeId) || this.routeMap.get(this.defaultRouteId);
@@ -183,15 +171,15 @@ export class AppShell {
     tab.href = route.hash;
     tab.dataset.routeId = route.id;
     tab.className = "module-tab";
-    tab.title = route.description;
+    tab.title = toDisplayText(route.description || route.title || route.label);
 
     const label = document.createElement("span");
     label.className = "module-tab__label";
-    label.textContent = route.label;
+    label.textContent = toDisplayText(route.label);
 
     const desc = document.createElement("span");
     desc.className = "module-tab__desc";
-    desc.textContent = route.title;
+    desc.textContent = toDisplayText(route.navHint || route.title);
 
     tab.append(label, desc);
     return tab;
@@ -227,7 +215,7 @@ export class AppShell {
     this.teardownActiveRoute();
     this.highlightRoute(route);
     this.viewEl.dataset.routeId = route.id;
-    document.title = `EnergyCrawler UI 2.0 · ${route.title}`;
+    document.title = `EnergyCrawler · ${route.title}`;
 
     this.viewEl.innerHTML = "";
     const loadingSection = document.createElement("section");

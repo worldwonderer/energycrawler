@@ -353,6 +353,7 @@
 }
 
 .ui2-tag {
+  appearance: none;
   display: inline-flex;
   align-items: center;
   height: 25px;
@@ -360,8 +361,23 @@
   border-radius: 9px;
   border: 1px solid var(--ui2-border);
   background: var(--ui2-surface-soft);
+  color: inherit;
   font-size: 0.8rem;
   font-weight: 500;
+  font-family: inherit;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
+}
+
+.ui2-tag:hover {
+  border-color: var(--ui2-accent);
+}
+
+.ui2-tag.is-active {
+  border-color: rgba(37, 99, 235, 0.42);
+  background: var(--ui2-accent-soft);
+  color: #1d4ed8;
 }
 
 .ui2-metric-grid {
@@ -422,6 +438,27 @@
   outline: 2px solid rgba(37, 99, 235, 0.28);
   outline-offset: 1px;
   border-color: var(--ui2-accent);
+}
+
+.ui2-data__latest-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.ui2-data__latest-state .ui2-page__hint {
+  margin: 0;
+}
+
+.ui2-data__quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ui2-data__quick-filters {
+  margin-top: -2px;
 }
 
 .ui2-table-wrap {
@@ -494,6 +531,51 @@
 
 .ui2-link:hover {
   text-decoration: underline;
+}
+
+.ui2-link--inline {
+  margin-top: 4px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-size: 0.75rem;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.ui2-table-wrap--preview {
+  max-width: 100%;
+}
+
+.ui2-table--preview {
+  table-layout: fixed;
+}
+
+.ui2-table--preview th,
+.ui2-table--preview td {
+  max-width: 260px;
+}
+
+.ui2-table__preview-cell {
+  min-width: 120px;
+}
+
+.ui2-table__preview-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.4;
+}
+
+.ui2-table__preview-text.is-clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+
+.ui2-table__preview-text.is-expanded {
+  display: block;
 }
 
 .ui2-pagination {
@@ -602,6 +684,11 @@
 
   .ui2-metric-grid {
     grid-template-columns: 1fr;
+  }
+
+  .ui2-table--preview th,
+  .ui2-table--preview td {
+    max-width: 170px;
   }
 }
 

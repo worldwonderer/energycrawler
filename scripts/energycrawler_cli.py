@@ -2446,8 +2446,9 @@ def _build_quickstart_next_steps(payload: dict[str, Any], *, api_base: str, plat
     if not lines:
         base = _normalize_api_base(api_base)
         lines = [
-            f"Open runtime dashboard: {base}/ui#/runtime",
-            f"Open run history: {base}/ui#/runs",
+            f"Open onboarding page: {base}/ui#/welcome",
+            f"Open run monitor: {base}/ui#/runs",
+            f"Open system settings: {base}/ui#/settings",
             "Check runtime status: uv run energycrawler status",
             f"Preview latest data: uv run energycrawler data latest --platform {platform}",
         ]

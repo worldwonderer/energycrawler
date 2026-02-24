@@ -90,6 +90,18 @@ function parseHashQueryParams() {
   return new URLSearchParams(hash.slice(queryIndex + 1));
 }
 
+function navigateToRoute(ctx, routeId, fallbackHash = `#/${routeId}`) {
+  if (ctx && typeof ctx.navigate === "function") {
+    ctx.navigate(routeId);
+    return true;
+  }
+  if (typeof window !== "undefined") {
+    window.location.hash = fallbackHash;
+    return true;
+  }
+  return false;
+}
+
 function statusTone(status) {
   const normalized = String(status || "").toLowerCase();
   if (["completed", "success"].includes(normalized)) return "success";
@@ -97,6 +109,40 @@ function statusTone(status) {
   if (["running", "accepted"].includes(normalized)) return "info";
   if (["failed", "rejected", "cancelled", "error"].includes(normalized)) return "danger";
   return "neutral";
+}
+
+function summarizeRuns(runs) {
+  const summary = {
+    total: 0,
+    running: 0,
+    failed: 0,
+    queued: 0,
+    completed: 0,
+  };
+
+  if (!Array.isArray(runs)) return summary;
+  summary.total = runs.length;
+
+  runs.forEach((run) => {
+    const normalized = String(run?.status || "").toLowerCase();
+    if (["running", "accepted"].includes(normalized)) {
+      summary.running += 1;
+      return;
+    }
+    if (["failed", "rejected", "cancelled", "error"].includes(normalized)) {
+      summary.failed += 1;
+      return;
+    }
+    if (["queued", "pending"].includes(normalized)) {
+      summary.queued += 1;
+      return;
+    }
+    if (["completed", "success"].includes(normalized)) {
+      summary.completed += 1;
+    }
+  });
+
+  return summary;
 }
 
 function createStatusBadge(status) {
@@ -156,6 +202,7 @@ export default async function renderRunsPage(mountEl, ctx = {}) {
     wsState: "idle",
     wsReconnectTimer: null,
     fallbackPollTimer: null,
+    lastRunsLoadedAt: null,
     destroyed: false,
   };
   const cleanups = [];
@@ -164,16 +211,55 @@ export default async function renderRunsPage(mountEl, ctx = {}) {
     <section class="sr-page sr-runs-page">
       <header class="sr-header">
         <div>
-          <h2>Run Center</h2>
-          <p class="sr-muted">按状态/平台/时间过滤 runs，查看详情抽屉与关联 task 日志。</p>
+          <h2>运行监控</h2>
+          <p class="sr-muted">先看结论，再处理详情和日志。</p>
         </div>
         <div class="sr-actions">
           <button type="button" class="secondary" data-action="refresh-runs">刷新 runs</button>
+          <button type="button" class="secondary" data-action="open-data-page">查看最新结果</button>
+          <button type="button" class="secondary" data-action="open-scheduler-page">去创建任务</button>
         </div>
       </header>
 
       <section class="sr-card">
-        <h3 class="sr-card-title">Run 过滤</h3>
+        <div class="sr-card-headline">
+          <h3 class="sr-card-title">当前结论</h3>
+          <p class="sr-muted" data-role="monitor-updated-at">最近刷新：-</p>
+        </div>
+        <div class="sr-table-wrap">
+          <table class="sr-table">
+            <thead>
+              <tr>
+                <th>进行中</th>
+                <th>失败/异常</th>
+                <th>排队中</th>
+                <th>已完成</th>
+                <th>总数</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td data-role="summary-running">-</td>
+                <td data-role="summary-failed">-</td>
+                <td data-role="summary-queued">-</td>
+                <td data-role="summary-completed">-</td>
+                <td data-role="summary-total">-</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="sr-card-headline">
+          <p class="sr-muted" data-role="summary-next-step">等待加载运行结论...</p>
+          <div class="sr-actions">
+            <button type="button" class="secondary sr-btn-sm" data-action="focus-failed-runs">只看失败</button>
+            <button type="button" class="secondary sr-btn-sm" data-action="focus-running-runs">只看进行中</button>
+            <button type="button" class="secondary sr-btn-sm" data-action="focus-latest-run">打开最新一条</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="sr-card">
+        <h3 class="sr-card-title">筛选运行记录</h3>
         <form data-role="runs-filter-form" class="sr-controls sr-controls--runs">
           <label class="sr-control">
             <span>job_id</span>
@@ -218,7 +304,7 @@ export default async function renderRunsPage(mountEl, ctx = {}) {
       </section>
 
       <section class="sr-card">
-        <h3 class="sr-card-title">Run 列表</h3>
+        <h3 class="sr-card-title">运行列表</h3>
         <div class="sr-table-wrap">
           <table class="sr-table sr-table--runs">
             <thead>
@@ -318,6 +404,18 @@ export default async function renderRunsPage(mountEl, ctx = {}) {
     runsBody: mountEl.querySelector('[data-role="runs-body"]'),
     runsMeta: mountEl.querySelector('[data-role="runs-meta"]'),
     refreshRunsBtn: mountEl.querySelector('[data-action="refresh-runs"]'),
+    openDataBtn: mountEl.querySelector('[data-action="open-data-page"]'),
+    openSchedulerBtn: mountEl.querySelector('[data-action="open-scheduler-page"]'),
+    summaryRunning: mountEl.querySelector('[data-role="summary-running"]'),
+    summaryFailed: mountEl.querySelector('[data-role="summary-failed"]'),
+    summaryQueued: mountEl.querySelector('[data-role="summary-queued"]'),
+    summaryCompleted: mountEl.querySelector('[data-role="summary-completed"]'),
+    summaryTotal: mountEl.querySelector('[data-role="summary-total"]'),
+    summaryNextStep: mountEl.querySelector('[data-role="summary-next-step"]'),
+    summaryUpdatedAt: mountEl.querySelector('[data-role="monitor-updated-at"]'),
+    focusFailedBtn: mountEl.querySelector('[data-action="focus-failed-runs"]'),
+    focusRunningBtn: mountEl.querySelector('[data-action="focus-running-runs"]'),
+    focusLatestBtn: mountEl.querySelector('[data-action="focus-latest-run"]'),
 
     drawer: mountEl.querySelector('[data-role="run-drawer"]'),
     drawerBackdrop: mountEl.querySelector('[data-role="drawer-backdrop"]'),
@@ -343,9 +441,30 @@ export default async function renderRunsPage(mountEl, ctx = {}) {
     console.log(`[runs] ${message}`);
   }
 
+  function openRouteFromRuns(routeId, fallbackHash, successMessage) {
+    const navigated = navigateToRoute(ctx, routeId, fallbackHash);
+    if (!navigated) {
+      toast("当前环境不支持页面跳转。", {
+        tone: "warning",
+        title: "运行监控",
+      });
+      return false;
+    }
+    if (successMessage) {
+      toast(successMessage, {
+        tone: "info",
+        title: "运行监控",
+      });
+    }
+    return true;
+  }
+
   function setRunsLoading(isLoading) {
     state.loadingRuns = isLoading;
     if (refs.refreshRunsBtn) refs.refreshRunsBtn.disabled = isLoading;
+    if (refs.focusFailedBtn) refs.focusFailedBtn.disabled = isLoading;
+    if (refs.focusRunningBtn) refs.focusRunningBtn.disabled = isLoading;
+    if (refs.focusLatestBtn) refs.focusLatestBtn.disabled = isLoading;
   }
 
   function setWsState(nextState, detail = "") {
@@ -723,6 +842,78 @@ export default async function renderRunsPage(mountEl, ctx = {}) {
     refs.runsMeta.textContent = `共 ${state.runs.length} 条运行记录`;
   }
 
+  function renderRunSummary() {
+    const summary = summarizeRuns(state.runs);
+    const updatedAtText = state.lastRunsLoadedAt
+      ? safeFormatDateTime(ctx, state.lastRunsLoadedAt)
+      : "-";
+
+    if (refs.summaryRunning) refs.summaryRunning.textContent = String(summary.running);
+    if (refs.summaryFailed) refs.summaryFailed.textContent = String(summary.failed);
+    if (refs.summaryQueued) refs.summaryQueued.textContent = String(summary.queued);
+    if (refs.summaryCompleted) refs.summaryCompleted.textContent = String(summary.completed);
+    if (refs.summaryTotal) refs.summaryTotal.textContent = String(summary.total);
+    if (refs.summaryUpdatedAt) refs.summaryUpdatedAt.textContent = `最近刷新：${updatedAtText}`;
+
+    if (!refs.summaryNextStep) return;
+    if (summary.failed > 0) {
+      refs.summaryNextStep.textContent = `发现 ${summary.failed} 条失败/异常运行，建议先筛选失败项并查看日志。`;
+      return;
+    }
+    if (summary.running > 0) {
+      refs.summaryNextStep.textContent = `当前有 ${summary.running} 条运行中，建议打开最新运行观察实时日志。`;
+      return;
+    }
+    if (summary.queued > 0) {
+      refs.summaryNextStep.textContent = `当前有 ${summary.queued} 条任务排队，建议等待或检查队列资源。`;
+      return;
+    }
+    if (summary.completed > 0) {
+      refs.summaryNextStep.textContent = `最近已有 ${summary.completed} 条运行完成，可前往“查看结果”确认最新数据。`;
+      return;
+    }
+    refs.summaryNextStep.textContent = "暂无运行记录，可先去“创建任务”发起一次运行。";
+  }
+
+  async function applyQuickFilter(status) {
+    const nextStatus = String(status || "").trim();
+    refs.runsFilterForm.elements.status.value = nextStatus;
+    await loadRuns();
+    toast(`已筛选状态：${nextStatus || "全部"}`, {
+      tone: "info",
+      title: "运行监控",
+    });
+  }
+
+  async function openLatestRun() {
+    if (!state.runs.length) {
+      toast("暂无运行记录可打开", {
+        tone: "warning",
+        title: "运行监控",
+      });
+      return;
+    }
+
+    const latestRun = [...state.runs].sort((left, right) => {
+      const leftTime = new Date(
+        left?.triggered_at || left?.started_at || left?.updated_at || left?.created_at || 0
+      ).getTime();
+      const rightTime = new Date(
+        right?.triggered_at || right?.started_at || right?.updated_at || right?.created_at || 0
+      ).getTime();
+      return rightTime - leftTime;
+    })[0];
+
+    if (!latestRun?.run_id) return;
+    const opened = await loadRunDetail(latestRun.run_id);
+    if (opened) {
+      toast(`已打开最新运行：#${latestRun.run_id}`, {
+        tone: "info",
+        title: "运行监控",
+      });
+    }
+  }
+
   function renderRunDetail(run) {
     state.selectedRun = run;
     refs.drawerSubtitle.textContent = `run_id=${run.run_id} · job_id=${run.job_id || "-"}`;
@@ -793,11 +984,13 @@ export default async function renderRunsPage(mountEl, ctx = {}) {
       const query = buildRunsQuery();
       const payload = await api.get("/api/scheduler/runs", { query });
       state.runs = normalizeRuns(payload);
+      state.lastRunsLoadedAt = new Date().toISOString();
       renderRunsTable();
+      renderRunSummary();
     } catch (error) {
       toast(`加载 runs 失败：${error?.message || "unknown"}`, {
         tone: "error",
-        title: "Run Center",
+        title: "运行监控",
       });
     } finally {
       setRunsLoading(false);
@@ -805,7 +998,7 @@ export default async function renderRunsPage(mountEl, ctx = {}) {
   }
 
   async function loadRunDetail(runId) {
-    if (!runId) return;
+    if (!runId) return false;
     state.loadingDetail = true;
     try {
       const payload = await api.get(`/api/scheduler/runs/${encodeURIComponent(runId)}`);
@@ -819,11 +1012,13 @@ export default async function renderRunsPage(mountEl, ctx = {}) {
       setDrawerOpen(true);
       await loadLogs({ silent: true });
       connectWebSocket();
+      return true;
     } catch (error) {
       toast(`加载 run 详情失败：${error?.message || "unknown"}`, {
         tone: "error",
         title: "Run 详情",
       });
+      return false;
     } finally {
       state.loadingDetail = false;
     }
@@ -929,15 +1124,52 @@ export default async function renderRunsPage(mountEl, ctx = {}) {
       return;
     }
 
+    if (action === "open-data-page") {
+      openRouteFromRuns("data", "#/data", "已打开“查看结果”页面。");
+      return;
+    }
+
+    if (action === "open-scheduler-page") {
+      openRouteFromRuns("scheduler", "#/scheduler", "已打开“创建任务”页面。");
+      return;
+    }
+
+    if (action === "focus-failed-runs") {
+      await applyQuickFilter("failed");
+      return;
+    }
+
+    if (action === "focus-running-runs") {
+      await applyQuickFilter("running");
+      return;
+    }
+
+    if (action === "focus-latest-run") {
+      await openLatestRun();
+      return;
+    }
+
     if (action === "clear-runs-filters") {
       refs.runsFilterForm.reset();
       refs.runsFilterForm.elements.limit.value = "100";
       await loadRuns();
+      toast("已清空筛选条件，显示最近运行记录。", {
+        tone: "info",
+        title: "运行监控",
+      });
       return;
     }
 
     if (action === "open-run-detail") {
-      await loadRunDetail(trigger.dataset.runId || "");
+      const runId = trigger.dataset.runId || "";
+      if (!runId) {
+        toast("未找到 run_id，无法打开详情。", {
+          tone: "warning",
+          title: "运行监控",
+        });
+        return;
+      }
+      await loadRunDetail(runId);
       return;
     }
 
@@ -965,6 +1197,7 @@ export default async function renderRunsPage(mountEl, ctx = {}) {
   cleanups.push(() => refs.drawerBackdrop.removeEventListener("click", onDrawerBackdropClick));
 
   applyFiltersFromHash();
+  renderRunSummary();
   await loadRuns();
 
   return {
