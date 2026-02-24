@@ -1,96 +1,103 @@
 # EnergyCrawler 使用方法（xhs + x）
 
-当前仓库是精简版，只保留两个平台：
+当前仓库仅保留两个平台：`xhs`（小红书）、`x`（X / Twitter）。
+签名与浏览器自动化统一依赖 Energy 服务。
 
-- `xhs`（小红书）
-- `x`（X / Twitter）
-
-签名与浏览器自动化基于 Energy 服务，不再提供旧平台兼容路径。
-
-## 快速开始
-
-### 1. 前置依赖
-
-- Python `3.11`
-- [uv](https://docs.astral.sh/uv/getting-started/installation)
-- Energy 服务（默认 `localhost:50051`）
-
-### 2. 安装依赖
+## 10 分钟 Quickstart（首选）
 
 ```bash
-cd EnergyCrawler
+# 1) 安装核心依赖
 uv sync
-uv run energycrawler init
+
+# 2) 一键上手（推荐）
+uv run energycrawler quickstart
 ```
 
-### 3. 启动 Energy 服务
+> 若当前分支尚未包含 `quickstart` 子命令，请改用下方“兼容路径（旧命令）”。
+
+## 依赖安装：core 与 optional
+
+核心能力（xhs/x 基础抓取）：
 
 ```bash
+uv sync
+# 或
+uv pip install -r requirements-core.txt
+```
+
+可选能力按需追加：
+
+```bash
+# Excel 导出
+uv sync --extra excel
+
+# PostgreSQL 存储
+uv sync --extra postgres
+
+# 开发/测试
+uv sync --extra dev
+
+# 兼容旧方式：安装全量依赖
+uv pip install -r requirements.txt
+```
+
+## 三种官方路径（按场景三选一）
+
+### A) 本地最简（推荐）
+
+```bash
+uv sync
+uv run energycrawler quickstart
+uv run energycrawler status
+uv run energycrawler run --platform xhs --keywords 新能源
+```
+
+### B) Docker 路径（无本地 Python 环境）
+
+```bash
+docker run --rm -it \
+  -p 8080:8080 \
+  -v "$PWD":/workspace \
+  -w /workspace \
+  python:3.11-slim bash -lc '
+    pip install -U pip uv &&
+    uv sync &&
+    uv run uvicorn api.main:app --host 0.0.0.0 --port 8080
+  '
+```
+
+### C) 远程 Energy 服务路径
+
+```bash
+export ENERGY_SERVICE_ADDRESS="<remote-host>:50051"
+uv sync
+uv run energycrawler doctor --skip-login-check
+uv run energycrawler run --platform x --keywords "open source"
+```
+
+## 兼容路径（旧命令）
+
+```bash
+uv run energycrawler init --template .env.quickstart.example --check
 uv run energycrawler energy ensure
-```
-
-### 4. setup / config show / doctor（先做环境可用性确认）
-
-```bash
-# setup（一键向导）
-uv run energycrawler setup
-
-# config show（核心配置）
-uv run energycrawler config show --simple
-
-# 环境变量分层查看
+uv run energycrawler auth xhs-open-login --api-base http://localhost:8080
 uv run energycrawler config env --mode core
-uv run energycrawler config env --mode advanced
-
-# doctor（全量体检）
 uv run energycrawler doctor
 ```
 
-### 4.1 极简路径（推荐）
+## 常用运行命令
 
 ```bash
-uv run energycrawler setup
-uv run energycrawler auth xhs-open-login --api-base http://localhost:8080
-uv run energycrawler status
-uv run energycrawler run --platform xhs --keywords 新能源
-uv run energycrawler data list --platform xhs --limit 20
-uv run energycrawler data latest --download
-```
-
-### 5. 运行爬虫
-
-```bash
-# xhs 关键词搜索
-uv run energycrawler crawl -- --platform xhs --lt cookie --type search --keywords 编程副业,独立开发
-
 # 简化模式（推荐）
 uv run energycrawler run --platform xhs --keywords 编程副业,独立开发
 
-# x 指定推文详情
-uv run energycrawler crawl -- --platform x --lt cookie --type detail --specified_id 1890000000000000000
+# 兼容旧命令（保留）
+uv run energycrawler crawl -- --platform xhs --lt cookie --type search --keywords 编程副业,独立开发
 
-# 查看全部参数
-uv run energycrawler crawl -- --help
-
-# 一键环境体检
-uv run energycrawler doctor
-
-# 运行态快照（推荐）
+# 查看运行态与导出数据
 uv run energycrawler status
-
-# 通过 API 快速预览/下载最新导出数据
 uv run energycrawler data list --platform xhs --limit 20
-uv run energycrawler data latest --platform xhs
-uv run energycrawler data latest --download --platform x --output ./downloads/
-
-# 调度器（关键词/KOL 固定间隔）
-uv run energycrawler scheduler create-keyword --name xhs-新能源 --platform xhs --interval-minutes 30 --keywords 新能源
-uv run energycrawler scheduler create-kol --name x-kol --platform x --interval-minutes 60 --creator-ids elonmusk
-uv run energycrawler scheduler list
-uv run energycrawler scheduler runs --limit 20
-
-# 严格清理报告（含旧命令/绝对路径/尾随空格）
-uv run energycrawler cleanup-report --json
+uv run energycrawler data latest --download
 ```
 
 ## API 服务

@@ -27,9 +27,82 @@ def _masked_secret_field(raw: str) -> dict[str, Any]:
     }
 
 
+def _is_configured_value(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple, dict, set)):
+        return bool(value)
+    return True
+
+
+def _resolve_config_value(key: str) -> Any:
+    if hasattr(runtime_cfg, key):
+        return getattr(runtime_cfg, key)
+    if hasattr(db_config, key):
+        return getattr(db_config, key)
+    return ""
+
+
+def _build_layered_config_snapshot() -> dict[str, Any]:
+    layer_order = list(getattr(runtime_cfg, "CONFIG_LAYER_ORDER", ("minimal", "core", "advanced")))
+    default_layer = str(getattr(runtime_cfg, "CONFIG_LAYER_DEFAULT", "minimal")).strip().lower() or "minimal"
+    sensitive_keys = set(getattr(runtime_cfg, "CONFIG_SENSITIVE_KEYS", set()))
+
+    get_metadata = getattr(runtime_cfg, "get_config_field_metadata", None)
+    get_layer_keys = getattr(runtime_cfg, "get_config_layer_env_keys", None)
+    explicit_layer_map = getattr(runtime_cfg, "CONFIG_LAYER_ENV_KEYS", {})
+
+    layers: dict[str, list[dict[str, Any]]] = {}
+    for layer in layer_order:
+        keys: list[str] = []
+        if callable(get_layer_keys):
+            try:
+                keys = list(get_layer_keys(layer, cumulative=False))
+            except Exception:
+                keys = []
+        if not keys and isinstance(explicit_layer_map, dict):
+            keys = list(explicit_layer_map.get(layer, []))
+
+        entries: list[dict[str, Any]] = []
+        for key in keys:
+            meta: dict[str, Any] = {}
+            if callable(get_metadata):
+                try:
+                    maybe_meta = get_metadata(key)
+                    if isinstance(maybe_meta, dict):
+                        meta = maybe_meta
+                except Exception:
+                    meta = {}
+
+            raw_value = _resolve_config_value(key)
+            sensitive = bool(meta.get("sensitive", key in sensitive_keys))
+            display_value: Any = _mask_secret(str(raw_value)) if sensitive else raw_value
+            entries.append(
+                {
+                    "key": key,
+                    "label": str(meta.get("label", key)),
+                    "description": str(meta.get("description", "")),
+                    "layer": str(meta.get("layer", layer)),
+                    "configured": _is_configured_value(raw_value),
+                    "sensitive": sensitive,
+                    "value": display_value,
+                }
+            )
+
+        layers[layer] = entries
+
+    return {
+        "default_layer": default_layer,
+        "layers": layers,
+    }
+
+
 def build_public_runtime_config() -> dict[str, Any]:
     """Build a sanitized runtime config snapshot for API responses."""
     return {
+        "grouped": _build_layered_config_snapshot(),
         "runtime": {
             "platform": runtime_cfg.PLATFORM,
             "crawler_type": runtime_cfg.CRAWLER_TYPE,
@@ -116,6 +189,24 @@ def build_public_runtime_config() -> dict[str, Any]:
 
 
 API_CONFIG_RESPONSE_EXAMPLE = {
+    "grouped": {
+        "default_layer": "minimal",
+        "layers": {
+            "minimal": [
+                {
+                    "key": "PLATFORM",
+                    "label": "Platform",
+                    "description": "目标平台（xhs/x）",
+                    "layer": "minimal",
+                    "configured": True,
+                    "sensitive": False,
+                    "value": "xhs",
+                }
+            ],
+            "core": [],
+            "advanced": [],
+        },
+    },
     "runtime": {
         "platform": "xhs",
         "crawler_type": "search",

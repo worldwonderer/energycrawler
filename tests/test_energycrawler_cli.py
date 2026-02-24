@@ -51,6 +51,7 @@ def test_parser_includes_setup_config_show_and_precheck():
     setup_args = parser.parse_args(["setup", "--json"])
     assert setup_args.command == "setup"
     assert setup_args.handler is cli._setup_cmd
+    assert setup_args.question_set == "minimal"
 
     config_args = parser.parse_args(["config", "show", "--json"])
     assert config_args.command == "config"
@@ -63,6 +64,9 @@ def test_parser_includes_setup_config_show_and_precheck():
     assert env_args.config_command == "env"
     assert env_args.mode == "core"
     assert env_args.handler is cli._config_env_cmd
+
+    env_minimal_args = parser.parse_args(["config", "env", "--mode", "minimal"])
+    assert env_minimal_args.mode == "minimal"
 
     precheck_args = parser.parse_args(["precheck", "--json"])
     assert precheck_args.command == "precheck"
@@ -157,6 +161,25 @@ def test_config_env_json_hides_secret_values(monkeypatch, capsys):
     assert payload["variables"]["TWITTER_AUTH_TOKEN"]["configured"] is False
 
 
+def test_config_env_minimal_focuses_on_onboarding_keys(monkeypatch, capsys):
+    monkeypatch.setenv("PLATFORM", "xhs")
+    monkeypatch.setenv("CRAWLER_TYPE", "search")
+    monkeypatch.setenv("KEYWORDS", "新能源")
+    monkeypatch.setenv("SAVE_DATA_OPTION", "json")
+    monkeypatch.setenv("ENERGY_SERVICE_ADDRESS", "localhost:50051")
+    monkeypatch.setenv("COOKIES", "a1=abcdef123456")
+    monkeypatch.setenv("LOGIN_TYPE", "cookie")
+
+    args = argparse.Namespace(mode="minimal", show_secrets=False, json=True)
+    code = cli._config_env_cmd(args)
+
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    keys = set(payload["variables"].keys())
+    assert {"PLATFORM", "CRAWLER_TYPE", "KEYWORDS", "SAVE_DATA_OPTION", "ENERGY_SERVICE_ADDRESS", "COOKIES"} <= keys
+    assert "LOGIN_TYPE" not in keys
+
+
 def test_config_env_text_prints_empty_marker(monkeypatch, capsys):
     monkeypatch.delenv("KEYWORDS", raising=False)
     args = argparse.Namespace(mode="core", show_secrets=False, json=False)
@@ -223,6 +246,8 @@ def test_setup_minimal_json_flow(monkeypatch, capsys):
     assert code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["setup_ok"] is True
+    assert payload["question_set"]["mode"] == "minimal"
+    assert payload["question_set"]["required_count"] <= 6
     step_names = [step["name"] for step in payload["steps"]]
     assert "env_file" in step_names
     assert "energy_ensure" in step_names

@@ -37,6 +37,53 @@ def test_web_ui_assets_served(monkeypatch):
     assert "AppShell" in response.text
 
 
+def test_app_shell_registers_welcome_route_and_first_run_default(monkeypatch):
+    async def _noop():
+        return None
+
+    monkeypatch.setattr(api_main.scheduler_service, "start", _noop)
+    monkeypatch.setattr(api_main.scheduler_service, "stop", _noop)
+
+    client = TestClient(app)
+    response = client.get("/ui/src/app-shell.js")
+    assert response.status_code == 200
+    assert 'id: "welcome"' in response.text
+    assert 'hash: "#/welcome"' in response.text
+    assert "this.defaultRouteId" in response.text
+    assert "ONBOARDING_COMPLETED_STORAGE_KEY" in response.text
+
+
+def test_welcome_page_module_served(monkeypatch):
+    async def _noop():
+        return None
+
+    monkeypatch.setattr(api_main.scheduler_service, "start", _noop)
+    monkeypatch.setattr(api_main.scheduler_service, "stop", _noop)
+
+    client = TestClient(app)
+    response = client.get("/ui/src/pages/welcome.js")
+    assert response.status_code == 200
+    assert "mountWelcomePage" in response.text
+    assert "环境健康 (Env Health)" in response.text
+    assert "Demo Run" in response.text
+    assert "#/runtime" in response.text
+    assert "#/data" in response.text
+
+
+def test_runtime_page_has_welcome_entry_link(monkeypatch):
+    async def _noop():
+        return None
+
+    monkeypatch.setattr(api_main.scheduler_service, "start", _noop)
+    monkeypatch.setattr(api_main.scheduler_service, "stop", _noop)
+
+    client = TestClient(app)
+    response = client.get("/ui/src/pages/runtime.js")
+    assert response.status_code == 200
+    assert 'href="#/welcome"' in response.text
+    assert "Welcome 引导" in response.text
+
+
 def test_dashboard_jump_to_runs_uses_query_params(monkeypatch):
     async def _noop():
         return None

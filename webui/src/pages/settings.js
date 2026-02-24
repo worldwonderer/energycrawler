@@ -192,6 +192,93 @@ function createConfigSummaryRows(config) {
   ];
 }
 
+function normalizeLayerEntries(entries, fallbackLayer = "minimal") {
+  if (!Array.isArray(entries)) return [];
+  return entries
+    .filter((entry) => entry && typeof entry === "object")
+    .map((entry) => {
+      const key = String(entry.key || entry.label || "").trim();
+      return {
+        key: key || "-",
+        label: String(entry.label || key || "-"),
+        description: String(entry.description || ""),
+        value: entry.value,
+        layer: String(entry.layer || fallbackLayer),
+        configured: typeof entry.configured === "boolean" ? entry.configured : true,
+        sensitive: typeof entry.sensitive === "boolean" ? entry.sensitive : false,
+      };
+    });
+}
+
+function renderLayerItems(entries, emptyText) {
+  if (!entries.length) {
+    return `<div class="rs-inline-note rs-empty-state" data-tone="neutral">${escapeHtml(emptyText)}</div>`;
+  }
+
+  return `
+    <div class="rs-summary-grid">
+      ${entries
+        .map((entry) => {
+          const metaParts = [];
+          if (!entry.configured) metaParts.push("未配置");
+          if (entry.sensitive) metaParts.push("敏感项（已脱敏）");
+          if (entry.description) metaParts.push(entry.description);
+          const metaMarkup = metaParts.length
+            ? `<p class="rs-summary-meta">${escapeHtml(metaParts.join(" · "))}</p>`
+            : "";
+          return `
+            <article class="rs-summary-item">
+              <p class="rs-summary-key">${escapeHtml(formatSummaryValue(entry.label))}</p>
+              <p class="rs-summary-value">${escapeHtml(formatSummaryValue(entry.value))}</p>
+              ${metaMarkup}
+            </article>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function createGroupedSummaryMarkup(config) {
+  const grouped = config?.grouped;
+  const layers = grouped?.layers;
+  if (!layers || typeof layers !== "object") return "";
+
+  const minimalEntries = normalizeLayerEntries(layers.minimal, "minimal");
+  const coreEntries = normalizeLayerEntries(layers.core, "core");
+  const advancedEntries = normalizeLayerEntries(layers.advanced, "advanced");
+  if (!minimalEntries.length && !coreEntries.length && !advancedEntries.length) return "";
+
+  const defaultLayer = String(grouped?.default_layer || "minimal");
+  const defaultLayerLabel = defaultLayer === "minimal" ? "minimal（默认）" : defaultLayer;
+
+  return `
+    <section class="rs-layer-block">
+      <div class="rs-panel-headline">
+        <div>
+          <h4>新手配置（${escapeHtml(defaultLayerLabel)}）</h4>
+          <p class="rs-panel-subtitle">默认只展示 minimal，先跑通后再调优。</p>
+        </div>
+      </div>
+      ${renderLayerItems(minimalEntries, "暂无 minimal 配置项")}
+    </section>
+
+    <details class="rs-layer-details">
+      <summary>高级配置（core + advanced）</summary>
+      <div class="rs-layer-sections">
+        <section class="rs-layer-section">
+          <h4>Core（常用运行控制）</h4>
+          ${renderLayerItems(coreEntries, "暂无 core 配置项")}
+        </section>
+        <section class="rs-layer-section">
+          <h4>Advanced（诊断/性能）</h4>
+          ${renderLayerItems(advancedEntries, "暂无 advanced 配置项")}
+        </section>
+      </div>
+    </details>
+  `;
+}
+
 function summarizeCookieCloud(config) {
   const cookiecloud = config?.auth?.cookiecloud || {};
 
@@ -299,7 +386,7 @@ export function mountSettingsPage(target, options = {}) {
 
       <section class="rs-panel rs-panel--summary">
         <h3>/api/config 摘要</h3>
-        <div class="rs-summary-grid" data-role="config-summary-grid">
+        <div class="rs-config-summary" data-role="config-summary-grid">
           <div class="rs-inline-note rs-empty-state" data-tone="warning">尚未加载配置摘要</div>
         </div>
       </section>
@@ -347,17 +434,26 @@ export function mountSettingsPage(target, options = {}) {
       return;
     }
 
-    const summaryRows = createConfigSummaryRows(state.config);
-    refs.configSummaryGrid.innerHTML = summaryRows
-      .map(
-        ([key, value]) => `
-          <article class="rs-summary-item">
-            <p class="rs-summary-key">${escapeHtml(formatSummaryValue(key))}</p>
-            <p class="rs-summary-value">${escapeHtml(formatSummaryValue(value))}</p>
-          </article>
-        `
-      )
-      .join("");
+    const groupedMarkup = createGroupedSummaryMarkup(state.config);
+    if (groupedMarkup) {
+      refs.configSummaryGrid.innerHTML = groupedMarkup;
+    } else {
+      const summaryRows = createConfigSummaryRows(state.config);
+      refs.configSummaryGrid.innerHTML = `
+        <div class="rs-summary-grid">
+          ${summaryRows
+            .map(
+              ([key, value]) => `
+                <article class="rs-summary-item">
+                  <p class="rs-summary-key">${escapeHtml(formatSummaryValue(key))}</p>
+                  <p class="rs-summary-value">${escapeHtml(formatSummaryValue(value))}</p>
+                </article>
+              `
+            )
+            .join("")}
+        </div>
+      `;
+    }
 
     refs.configRaw.textContent = JSON.stringify(state.config, null, 2);
 

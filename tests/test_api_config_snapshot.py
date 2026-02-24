@@ -29,11 +29,20 @@ def test_api_config_returns_sanitized_runtime_snapshot(monkeypatch):
     data = payload["data"]
     assert data["runtime"]["platform"] == "xhs"
     assert data["runtime"]["crawler_type"] == "search"
+    assert data["grouped"]["default_layer"] == "minimal"
+    minimal_keys = [item["key"] for item in data["grouped"]["layers"]["minimal"]]
+    assert "PLATFORM" in minimal_keys
+    assert "COOKIES" in minimal_keys
 
     xhs_cookie = data["auth"]["xhs_cookie"]
     assert xhs_cookie["configured"] is True
     assert xhs_cookie["masked"] != "a1=very-secret-cookie-value"
     assert "very-secret-cookie-value" not in xhs_cookie["masked"]
+
+    grouped_xhs_cookie = next(item for item in data["grouped"]["layers"]["minimal"] if item["key"] == "COOKIES")
+    assert grouped_xhs_cookie["sensitive"] is True
+    assert grouped_xhs_cookie["configured"] is True
+    assert "very-secret-cookie-value" not in str(grouped_xhs_cookie["value"])
 
     twitter_auth_token = data["auth"]["twitter_auth_token"]
     assert twitter_auth_token["configured"] is True
@@ -60,3 +69,4 @@ def test_api_config_openapi_includes_description_and_example():
     assert example["success"] is True
     assert example["message"] == "Runtime config snapshot"
     assert "auth" in example["data"]
+    assert "grouped" in example["data"]

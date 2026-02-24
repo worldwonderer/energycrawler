@@ -247,4 +247,172 @@ TWITTER_TWEET_IDS = os.getenv("TWITTER_TWEET_IDS", "").split(",") if os.getenv("
 # Twitter search type: "Latest", "Top"
 TWITTER_SEARCH_TYPE = os.getenv("TWITTER_SEARCH_TYPE", "Latest")
 
+# ==================== Config Layering Metadata ====================
+# Purpose:
+# - minimal: onboarding required fields (<= 6)
+# - core: commonly tuned runtime controls
+# - advanced: diagnostics / performance / rarely needed knobs
+CONFIG_LAYER_ORDER = ("minimal", "core", "advanced")
+CONFIG_LAYER_DEFAULT = "minimal"
+
+CONFIG_LAYER_ENV_KEYS: dict[str, list[str]] = {
+    "minimal": [
+        "PLATFORM",
+        "CRAWLER_TYPE",
+        "KEYWORDS",
+        "SAVE_DATA_OPTION",
+        "ENERGY_SERVICE_ADDRESS",
+        "COOKIES",
+    ],
+    "core": [
+        "LOGIN_TYPE",
+        "HEADLESS",
+        "START_PAGE",
+        "SAVE_DATA_PATH",
+        "ENABLE_ENERGY_BROWSER",
+        "ENERGY_HEADLESS",
+        "ENERGY_BROWSER_ID_PREFIX",
+        "CRAWLER_MAX_NOTES_COUNT",
+        "MAX_CONCURRENCY_NUM",
+        "CRAWLER_MAX_SLEEP_SEC",
+        "ENABLE_GET_COMMENTS",
+        "ENABLE_GET_SUB_COMMENTS",
+        "ENABLE_GET_MEIDAS",
+        "ENABLE_INCREMENTAL_CRAWL",
+        "RESUME_FROM_CHECKPOINT",
+        "TWITTER_AUTH_TOKEN",
+        "TWITTER_CT0",
+    ],
+    "advanced": [
+        "TWITTER_COOKIE",
+        "COOKIECLOUD_ENABLED",
+        "COOKIECLOUD_FORCE_SYNC",
+        "COOKIECLOUD_SERVER",
+        "COOKIECLOUD_UUID",
+        "COOKIECLOUD_PASSWORD",
+        "COOKIECLOUD_TIMEOUT_SEC",
+        "AUTH_WATCHDOG_ENABLED",
+        "AUTH_WATCHDOG_MAX_RETRIES",
+        "AUTH_WATCHDOG_RETRY_INTERVAL_SEC",
+        "AUTH_WATCHDOG_FORCE_COOKIECLOUD_SYNC",
+        "AUTH_WATCHDOG_MAX_RUNTIME_RECOVERIES",
+        "CRAWLER_HARD_MAX_NOTES_COUNT",
+        "CRAWLER_HARD_MAX_CONCURRENCY",
+        "CRAWLER_MIN_SLEEP_SEC",
+        "CRAWLER_SLEEP_JITTER_SEC",
+        "CRAWLER_RETRY_BASE_DELAY_SEC",
+        "CRAWLER_RETRY_MAX_DELAY_SEC",
+        "XHS_SIGNATURE_CANARY_ENABLED",
+        "XHS_SIGNATURE_CANARY_TIMEOUT_SEC",
+        "XHS_SIGNATURE_CANARY_BASELINE_PATH",
+        "XHS_SIGNATURE_SESSION_TTL_SEC",
+        "XHS_SIGNATURE_FAILURE_THRESHOLD",
+    ],
+}
+
+CONFIG_SENSITIVE_KEYS = {
+    "COOKIES",
+    "TWITTER_COOKIE",
+    "TWITTER_AUTH_TOKEN",
+    "TWITTER_CT0",
+    "COOKIECLOUD_PASSWORD",
+    "COOKIECLOUD_UUID",
+}
+
+CONFIG_FIELD_METADATA: dict[str, dict[str, str]] = {
+    "PLATFORM": {"label": "Platform", "description": "目标平台（xhs/x）"},
+    "CRAWLER_TYPE": {"label": "Crawler Type", "description": "抓取模式（search/detail/creator）"},
+    "KEYWORDS": {"label": "Keywords", "description": "关键词（search 模式）"},
+    "SAVE_DATA_OPTION": {"label": "Save Option", "description": "结果存储格式"},
+    "ENERGY_SERVICE_ADDRESS": {"label": "Energy Address", "description": "Energy 服务地址（host:port）"},
+    "COOKIES": {"label": "XHS Cookies", "description": "小红书 Cookie（含 a1）"},
+    "LOGIN_TYPE": {"label": "Login Type", "description": "登录方式（默认 cookie）"},
+    "HEADLESS": {"label": "Headless", "description": "是否无头运行"},
+    "START_PAGE": {"label": "Start Page", "description": "起始页码"},
+    "SAVE_DATA_PATH": {"label": "Save Path", "description": "数据导出目录"},
+    "ENABLE_ENERGY_BROWSER": {"label": "Energy Enabled", "description": "启用 Energy 浏览器模式"},
+    "ENERGY_HEADLESS": {"label": "Energy Headless", "description": "Energy 浏览器无头模式"},
+    "ENERGY_BROWSER_ID_PREFIX": {"label": "Browser ID Prefix", "description": "Energy 浏览器实例前缀"},
+    "CRAWLER_MAX_NOTES_COUNT": {"label": "Max Notes", "description": "单次最大抓取数量"},
+    "MAX_CONCURRENCY_NUM": {"label": "Concurrency", "description": "并发 worker 数"},
+    "CRAWLER_MAX_SLEEP_SEC": {"label": "Sleep Seconds", "description": "请求间隔上限（秒）"},
+    "ENABLE_GET_COMMENTS": {"label": "Comments", "description": "抓取一级评论"},
+    "ENABLE_GET_SUB_COMMENTS": {"label": "Sub Comments", "description": "抓取二级评论"},
+    "ENABLE_GET_MEIDAS": {"label": "Media", "description": "抓取图片/视频资源"},
+    "ENABLE_INCREMENTAL_CRAWL": {"label": "Incremental", "description": "增量抓取模式"},
+    "RESUME_FROM_CHECKPOINT": {"label": "Resume", "description": "从断点继续"},
+    "TWITTER_AUTH_TOKEN": {"label": "Twitter auth_token", "description": "X/Twitter auth_token"},
+    "TWITTER_CT0": {"label": "Twitter ct0", "description": "X/Twitter ct0"},
+    "TWITTER_COOKIE": {"label": "Twitter Cookie", "description": "X/Twitter cookie header"},
+    "COOKIECLOUD_ENABLED": {"label": "CookieCloud", "description": "启用 CookieCloud 同步"},
+    "COOKIECLOUD_FORCE_SYNC": {"label": "Force Sync", "description": "强制覆盖本地 Cookie"},
+    "COOKIECLOUD_SERVER": {"label": "CookieCloud Server", "description": "CookieCloud 服务地址"},
+    "COOKIECLOUD_UUID": {"label": "CookieCloud UUID", "description": "CookieCloud UUID"},
+    "COOKIECLOUD_PASSWORD": {"label": "CookieCloud Password", "description": "CookieCloud 密钥"},
+    "COOKIECLOUD_TIMEOUT_SEC": {"label": "CookieCloud Timeout", "description": "CookieCloud 超时（秒）"},
+    "AUTH_WATCHDOG_ENABLED": {"label": "Auth Watchdog", "description": "认证失败自动恢复"},
+    "AUTH_WATCHDOG_MAX_RETRIES": {"label": "Watchdog Retries", "description": "认证恢复重试次数"},
+    "AUTH_WATCHDOG_RETRY_INTERVAL_SEC": {"label": "Retry Interval", "description": "认证恢复重试间隔"},
+    "AUTH_WATCHDOG_FORCE_COOKIECLOUD_SYNC": {
+        "label": "Force CookieCloud Sync",
+        "description": "恢复时强制刷新 CookieCloud",
+    },
+    "AUTH_WATCHDOG_MAX_RUNTIME_RECOVERIES": {
+        "label": "Runtime Recoveries",
+        "description": "运行期最大自动恢复次数",
+    },
+    "CRAWLER_HARD_MAX_NOTES_COUNT": {"label": "Hard Max Notes", "description": "抓取硬上限（数量）"},
+    "CRAWLER_HARD_MAX_CONCURRENCY": {"label": "Hard Concurrency", "description": "并发硬上限"},
+    "CRAWLER_MIN_SLEEP_SEC": {"label": "Min Sleep", "description": "请求最小间隔"},
+    "CRAWLER_SLEEP_JITTER_SEC": {"label": "Sleep Jitter", "description": "请求间隔随机抖动"},
+    "CRAWLER_RETRY_BASE_DELAY_SEC": {"label": "Retry Base Delay", "description": "重试基础延迟"},
+    "CRAWLER_RETRY_MAX_DELAY_SEC": {"label": "Retry Max Delay", "description": "重试最大延迟"},
+    "XHS_SIGNATURE_CANARY_ENABLED": {"label": "Signature Canary", "description": "签名链路 canary 开关"},
+    "XHS_SIGNATURE_CANARY_TIMEOUT_SEC": {"label": "Canary Timeout", "description": "签名 canary 超时"},
+    "XHS_SIGNATURE_CANARY_BASELINE_PATH": {"label": "Canary Baseline", "description": "签名基准文件路径"},
+    "XHS_SIGNATURE_SESSION_TTL_SEC": {"label": "Signature TTL", "description": "签名会话 TTL"},
+    "XHS_SIGNATURE_FAILURE_THRESHOLD": {"label": "Failure Threshold", "description": "签名失败阈值"},
+}
+
+
+def get_config_layer_env_keys(mode: str, *, cumulative: bool = True) -> list[str]:
+    normalized = (mode or CONFIG_LAYER_DEFAULT).strip().lower()
+    if normalized == "all":
+        normalized = "advanced"
+    if normalized not in CONFIG_LAYER_ENV_KEYS:
+        raise ValueError(f"Unsupported config layer: {mode}")
+
+    if not cumulative:
+        return list(CONFIG_LAYER_ENV_KEYS[normalized])
+
+    keys: list[str] = []
+    seen: set[str] = set()
+    target_index = CONFIG_LAYER_ORDER.index(normalized)
+    for index, layer in enumerate(CONFIG_LAYER_ORDER):
+        if index > target_index:
+            break
+        for key in CONFIG_LAYER_ENV_KEYS.get(layer, []):
+            if key in seen:
+                continue
+            seen.add(key)
+            keys.append(key)
+    return keys
+
+
+def get_config_field_metadata(key: str) -> dict[str, object]:
+    layer = "advanced"
+    for candidate in CONFIG_LAYER_ORDER:
+        if key in CONFIG_LAYER_ENV_KEYS.get(candidate, []):
+            layer = candidate
+            break
+    base = CONFIG_FIELD_METADATA.get(key, {})
+    return {
+        "key": key,
+        "layer": layer,
+        "label": base.get("label", key),
+        "description": base.get("description", ""),
+        "sensitive": key in CONFIG_SENSITIVE_KEYS,
+    }
+
+
 from .xhs_config import *

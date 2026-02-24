@@ -380,6 +380,61 @@
   gap: 8px;
 }
 
+.rs-config-summary {
+  display: grid;
+  gap: 10px;
+}
+
+.rs-layer-block {
+  display: grid;
+  gap: 8px;
+}
+
+.rs-layer-details {
+  border: 1px dashed color-mix(in srgb, var(--border) 86%, transparent);
+  border-radius: var(--radius-sm, 10px);
+  background: color-mix(in srgb, var(--surface-soft) 66%, transparent);
+  padding: 9px 10px;
+  display: grid;
+  gap: 10px;
+}
+
+.rs-layer-details > summary {
+  cursor: pointer;
+  list-style: none;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.rs-layer-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.rs-layer-details > summary::after {
+  content: " ▾";
+  color: var(--muted);
+}
+
+.rs-layer-details[open] > summary::after {
+  content: " ▴";
+}
+
+.rs-layer-sections {
+  display: grid;
+  gap: 10px;
+}
+
+.rs-layer-section {
+  display: grid;
+  gap: 8px;
+}
+
+.rs-layer-section h4 {
+  margin: 0;
+  font-size: 0.84rem;
+  color: var(--muted);
+}
+
 .rs-smoke-summary {
   margin-top: 2px;
 }
@@ -417,6 +472,13 @@
   font-size: 0.87rem;
   line-height: 1.35;
   word-break: break-word;
+}
+
+.rs-summary-meta {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.35;
 }
 
 .rs-json-panel {

@@ -69,23 +69,34 @@ CORE_RUNTIME_CONFIG_KEYS = [
     "ENERGY_SERVICE_ADDRESS",
 ]
 SENSITIVE_RUNTIME_KEYS = {"COOKIES", "TWITTER_COOKIE", "TWITTER_AUTH_TOKEN", "TWITTER_CT0"}
-CORE_ENV_KEYS = [
+MINIMAL_ENV_KEYS = [
     "PLATFORM",
     "CRAWLER_TYPE",
-    "LOGIN_TYPE",
     "KEYWORDS",
-    "HEADLESS",
     "SAVE_DATA_OPTION",
     "ENERGY_SERVICE_ADDRESS",
+    "COOKIES",
+]
+CORE_ENV_KEYS = [
+    "LOGIN_TYPE",
+    "HEADLESS",
+    "START_PAGE",
+    "SAVE_DATA_PATH",
+    "ENABLE_ENERGY_BROWSER",
+    "ENERGY_HEADLESS",
+    "ENERGY_BROWSER_ID_PREFIX",
     "CRAWLER_MAX_NOTES_COUNT",
     "MAX_CONCURRENCY_NUM",
     "CRAWLER_MAX_SLEEP_SEC",
-    "COOKIES",
+    "ENABLE_GET_COMMENTS",
+    "ENABLE_GET_SUB_COMMENTS",
+    "ENABLE_GET_MEIDAS",
+    "ENABLE_INCREMENTAL_CRAWL",
+    "RESUME_FROM_CHECKPOINT",
     "TWITTER_AUTH_TOKEN",
     "TWITTER_CT0",
 ]
 ADVANCED_ENV_KEYS = [
-    "SAVE_DATA_PATH",
     "TWITTER_COOKIE",
     "COOKIECLOUD_ENABLED",
     "COOKIECLOUD_FORCE_SYNC",
@@ -125,6 +136,8 @@ ADVANCED_ENV_KEYS = [
     "POSTGRES_DB_PWD",
     "POSTGRES_DB_NAME",
 ]
+SETUP_DEFAULT_QUESTION_SET = "minimal"
+SETUP_QUESTION_SET_CHOICES = ("minimal", "core", "advanced")
 SENSITIVE_ENV_KEYS = {
     "COOKIES",
     "TWITTER_COOKIE",
@@ -1995,19 +2008,88 @@ def _config_show_cmd(args: argparse.Namespace) -> int:
     return 0
 
 
+def _resolve_env_layer_map() -> dict[str, list[str]]:
+    fallback = {
+        "minimal": list(MINIMAL_ENV_KEYS),
+        "core": list(CORE_ENV_KEYS),
+        "advanced": list(ADVANCED_ENV_KEYS),
+    }
+    try:
+        base_config = _load_base_config_module()
+    except Exception:
+        return fallback
+
+    candidate = getattr(base_config, "CONFIG_LAYER_ENV_KEYS", None)
+    if not isinstance(candidate, dict):
+        return fallback
+
+    resolved: dict[str, list[str]] = {}
+    for layer in ("minimal", "core", "advanced"):
+        raw = candidate.get(layer, fallback[layer])
+        if not isinstance(raw, (list, tuple)):
+            resolved[layer] = list(fallback[layer])
+            continue
+
+        items: list[str] = []
+        for entry in raw:
+            key = str(entry).strip()
+            if key:
+                items.append(key)
+        resolved[layer] = items if items else list(fallback[layer])
+
+    return resolved
+
+
+def _merge_layer_keys(layer_map: dict[str, list[str]], layer_names: Sequence[str]) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for layer in layer_names:
+        for key in layer_map.get(layer, []):
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(key)
+    return merged
+
+
 def _env_keys_for_mode(mode: str) -> list[str]:
     normalized = (mode or "core").strip().lower()
+    layer_map = _resolve_env_layer_map()
+    if normalized == "minimal":
+        return _merge_layer_keys(layer_map, ("minimal",))
     if normalized == "core":
-        return list(CORE_ENV_KEYS)
+        return _merge_layer_keys(layer_map, ("minimal", "core"))
     if normalized == "advanced":
-        return list(ADVANCED_ENV_KEYS)
+        return _merge_layer_keys(layer_map, ("minimal", "core", "advanced"))
     if normalized == "all":
-        merged = list(CORE_ENV_KEYS)
-        for key in ADVANCED_ENV_KEYS:
-            if key not in merged:
-                merged.append(key)
-        return merged
+        return _merge_layer_keys(layer_map, ("minimal", "core", "advanced"))
     raise ValueError(f"Unsupported mode: {mode}")
+
+
+def _build_setup_question_set(mode: str) -> dict[str, Any]:
+    normalized = (mode or SETUP_DEFAULT_QUESTION_SET).strip().lower()
+    if normalized not in SETUP_QUESTION_SET_CHOICES:
+        normalized = SETUP_DEFAULT_QUESTION_SET
+
+    keys = _env_keys_for_mode(normalized)
+    variables: list[dict[str, Any]] = []
+    for key in keys:
+        raw = os.getenv(key, "")
+        configured = bool(str(raw).strip())
+        display_value = _mask_secret(str(raw)) if key in SENSITIVE_ENV_KEYS else raw
+        variables.append(
+            {
+                "key": key,
+                "configured": configured,
+                "value": display_value,
+            }
+        )
+
+    return {
+        "mode": normalized,
+        "required_count": len(keys),
+        "variables": variables,
+    }
 
 
 def _config_env_cmd(args: argparse.Namespace) -> int:
@@ -2046,8 +2128,10 @@ def _config_env_cmd(args: argparse.Namespace) -> int:
         suffix = "" if configured else "  # <empty>"
         print(f"{key}={value}{suffix}")
 
-    if mode == "core":
-        print("[config env] Tip: use --mode advanced to view additional tuning variables.")
+    if mode == "minimal":
+        print("[config env] Tip: use --mode core to view common runtime controls.")
+    elif mode == "core":
+        print("[config env] Tip: use --mode advanced to view diagnostic/performance variables.")
     return 0
 
 
@@ -2076,6 +2160,7 @@ def _setup_cmd(args: argparse.Namespace) -> int:
     template_path = _resolve_project_path(args.template)
     env_path = _resolve_project_path(args.env_file)
     steps: list[dict[str, Any]] = []
+    question_set = _build_setup_question_set(getattr(args, "question_set", SETUP_DEFAULT_QUESTION_SET))
 
     env_ok, env_detail = _prepare_env_file(template_path=template_path, env_path=env_path, force=args.force)
     steps.append(
@@ -2154,6 +2239,7 @@ def _setup_cmd(args: argparse.Namespace) -> int:
     payload = {
         "setup_ok": all(step.get("ok", False) or not step.get("required", True) for step in steps),
         "strict": bool(args.strict),
+        "question_set": question_set,
         "steps": steps,
     }
     payload["next_steps"] = _build_setup_next_steps(payload)
@@ -2169,11 +2255,362 @@ def _setup_cmd(args: argparse.Namespace) -> int:
             else:
                 status = "WARN"
             print(f"[setup] {status}: {step.get('name')} - {step.get('detail', '')}")
+        question_keys = [item.get("key") for item in question_set.get("variables", []) if item.get("key")]
+        print(
+            f"[setup] question_set={question_set.get('mode')} "
+            f"(required={question_set.get('required_count', 0)}): {', '.join(question_keys)}"
+        )
         print("[setup] Next steps:")
         for index, line in enumerate(payload["next_steps"], start=1):
             print(f"{index}) {line}")
 
     return 0 if payload["setup_ok"] else 1
+
+
+def _run_quickstart_demo_trigger(
+    *,
+    api_base: str,
+    platform: str,
+    keywords: str,
+    creator_ids: str,
+    interval_minutes: int,
+    timeout: float,
+    headless: bool,
+    save_option: str,
+) -> dict[str, Any]:
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    created_jobs: list[dict[str, Any]] = []
+    triggered_runs: list[dict[str, Any]] = []
+
+    create_requests: list[tuple[str, dict[str, Any]]] = [
+        (
+            "keyword",
+            {
+                "name": f"quickstart-keyword-{timestamp}",
+                "job_type": "keyword",
+                "platform": platform,
+                "interval_minutes": max(5, int(interval_minutes)),
+                "enabled": False,
+                "payload": {
+                    "keywords": keywords,
+                    "save_option": save_option,
+                    "headless": bool(headless),
+                    "safety_profile": "safe",
+                },
+            },
+        ),
+        (
+            "kol",
+            {
+                "name": f"quickstart-kol-{timestamp}",
+                "job_type": "kol",
+                "platform": platform,
+                "interval_minutes": max(5, int(interval_minutes)),
+                "enabled": False,
+                "payload": {
+                    "creator_ids": creator_ids,
+                    "save_option": save_option,
+                    "headless": bool(headless),
+                    "safety_profile": "safe",
+                },
+            },
+        ),
+    ]
+
+    try:
+        for label, create_payload in create_requests:
+            status, response_payload = _scheduler_call(
+                api_base=api_base,
+                endpoint="/api/scheduler/jobs",
+                method="POST",
+                payload=create_payload,
+                timeout=timeout,
+            )
+            if status != 200 or response_payload is None:
+                message = _extract_api_error_message(response_payload, f"HTTP {status}")
+                return {
+                    "ok": False,
+                    "detail": f"create {label} demo job failed: {message}",
+                    "created_jobs": created_jobs,
+                    "triggered_runs": triggered_runs,
+                }
+
+            job_data = response_payload.get("data", {}) if isinstance(response_payload, dict) else {}
+            if not isinstance(job_data, dict):
+                return {
+                    "ok": False,
+                    "detail": f"create {label} demo job failed: invalid API payload",
+                    "created_jobs": created_jobs,
+                    "triggered_runs": triggered_runs,
+                }
+
+            job_id = str(job_data.get("job_id", "")).strip()
+            if not job_id:
+                return {
+                    "ok": False,
+                    "detail": f"create {label} demo job failed: empty job_id",
+                    "created_jobs": created_jobs,
+                    "triggered_runs": triggered_runs,
+                }
+
+            created_jobs.append(
+                {
+                    "label": label,
+                    "job_id": job_id,
+                }
+            )
+
+        for item in created_jobs:
+            status, response_payload = _scheduler_call(
+                api_base=api_base,
+                endpoint=f"/api/scheduler/jobs/{item['job_id']}/run-now",
+                method="POST",
+                payload={},
+                timeout=timeout,
+            )
+            if status != 200 or response_payload is None:
+                message = _extract_api_error_message(response_payload, f"HTTP {status}")
+                return {
+                    "ok": False,
+                    "detail": f"trigger demo job failed ({item['job_id']}): {message}",
+                    "created_jobs": created_jobs,
+                    "triggered_runs": triggered_runs,
+                }
+
+            run_data = response_payload.get("data", {}) if isinstance(response_payload, dict) else {}
+            if not isinstance(run_data, dict):
+                run_data = {}
+            triggered_runs.append(
+                {
+                    "label": item["label"],
+                    "job_id": item["job_id"],
+                    "run_id": run_data.get("run_id"),
+                    "task_id": run_data.get("task_id"),
+                    "accepted": run_data.get("accepted"),
+                }
+            )
+
+        return {
+            "ok": True,
+            "detail": "demo scheduler jobs created and triggered (keyword + kol)",
+            "created_jobs": created_jobs,
+            "triggered_runs": triggered_runs,
+        }
+    except ConnectionError as exc:
+        return {
+            "ok": False,
+            "detail": f"demo trigger API unreachable: {exc}",
+            "created_jobs": created_jobs,
+            "triggered_runs": triggered_runs,
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "detail": f"demo trigger failed: {exc}",
+            "created_jobs": created_jobs,
+            "triggered_runs": triggered_runs,
+        }
+
+
+def _build_quickstart_next_steps(payload: dict[str, Any], *, api_base: str, platform: str) -> list[str]:
+    by_name = {item.get("name"): item for item in payload.get("steps", []) if isinstance(item, dict)}
+    lines: list[str] = []
+
+    env_step = by_name.get("env_file")
+    if env_step and not env_step.get("ok", False):
+        lines.append(
+            "Prepare minimal env file: uv run energycrawler init --template .env.quickstart.example --force"
+        )
+
+    energy_step = by_name.get("energy_ensure")
+    if energy_step and not energy_step.get("ok", False):
+        lines.append("Ensure Energy service: uv run energycrawler energy ensure")
+
+    doctor_step = by_name.get("doctor_precheck")
+    if doctor_step and not doctor_step.get("ok", False):
+        lines.append("Run diagnostics: uv run energycrawler doctor --storage-check")
+
+    login_step = by_name.get("login_readiness")
+    if login_step and not login_step.get("ok", False):
+        lines.append(
+            f"Complete login sync: uv run energycrawler auth xhs-open-login --api-base {_normalize_api_base(api_base)}"
+        )
+
+    demo_step = by_name.get("demo_trigger")
+    if demo_step and not demo_step.get("ok", False):
+        lines.append(
+            "Trigger demo jobs after login: "
+            f"uv run energycrawler scheduler smoke-e2e --platform {platform} --require-data-change=false"
+        )
+
+    if not lines:
+        base = _normalize_api_base(api_base)
+        lines = [
+            f"Open runtime dashboard: {base}/ui#/runtime",
+            f"Open run history: {base}/ui#/runs",
+            "Check runtime status: uv run energycrawler status",
+            f"Preview latest data: uv run energycrawler data latest --platform {platform}",
+        ]
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for line in lines:
+        if line in seen:
+            continue
+        seen.add(line)
+        deduped.append(line)
+    return deduped
+
+
+def _quickstart_cmd(args: argparse.Namespace) -> int:
+    template_path = _resolve_project_path(args.template)
+    env_path = _resolve_project_path(args.env_file)
+    steps: list[dict[str, Any]] = []
+
+    env_ok, env_detail = _prepare_env_file(template_path=template_path, env_path=env_path, force=args.force)
+    steps.append(
+        {
+            "name": "env_file",
+            "ok": env_ok,
+            "required": True,
+            "detail": env_detail,
+        }
+    )
+
+    ensure_args = [
+        "ensure",
+        "--host",
+        args.host,
+        "--port",
+        str(args.port),
+        "--timeout",
+        str(args.timeout),
+        "--retries",
+        str(args.retries),
+        "--sleep",
+        str(args.sleep),
+    ]
+    ensure_stdout = ""
+    ensure_stderr = ""
+    if args.json:
+        ensure_process = _run_local_script_capture("energy_service_cli.py", ensure_args)
+        ensure_code = ensure_process.returncode
+        ensure_stdout = _truncate_text(ensure_process.stdout)
+        ensure_stderr = _truncate_text(ensure_process.stderr)
+    else:
+        ensure_code = _run_local_script("energy_service_cli.py", ensure_args)
+    steps.append(
+        {
+            "name": "energy_ensure",
+            "ok": ensure_code == 0,
+            "required": True,
+            "detail": "energy service ensure succeeded" if ensure_code == 0 else f"energy ensure failed (exit code {ensure_code})",
+            "exit_code": ensure_code,
+            "command": ["energy_service_cli.py", *ensure_args],
+            **({"stdout": ensure_stdout} if ensure_stdout else {}),
+            **({"stderr": ensure_stderr} if ensure_stderr else {}),
+        }
+    )
+
+    doctor_payload = _run_precheck_suite(
+        host=args.host,
+        port=args.port,
+        timeout=args.timeout,
+        skip_login_check=True,
+        storage_check=args.storage_check,
+        login_required=False,
+        storage_required=bool(args.strict),
+    )
+    steps.append(
+        {
+            "name": "doctor_precheck",
+            "ok": bool(doctor_payload.get("healthy")),
+            "required": True,
+            "detail": "doctor precheck passed" if doctor_payload.get("healthy") else "doctor precheck has issues",
+            "payload": doctor_payload,
+        }
+    )
+
+    login_check = _run_login_state_precheck(
+        args.host,
+        args.port,
+        skip_browser_check=True,
+    )
+    login_check["name"] = "login_readiness"
+    login_check["required"] = bool(args.strict)
+    steps.append(login_check)
+
+    if args.skip_demo:
+        steps.append(
+            {
+                "name": "demo_trigger",
+                "ok": True,
+                "required": False,
+                "detail": "demo trigger skipped (--skip-demo)",
+                "skipped": True,
+            }
+        )
+    elif args.non_interactive and not login_check.get("ok", False):
+        steps.append(
+            {
+                "name": "demo_trigger",
+                "ok": False,
+                "required": bool(args.strict),
+                "detail": "demo trigger skipped because login is not ready in --non-interactive mode",
+                "skipped": True,
+            }
+        )
+    else:
+        demo_payload = _run_quickstart_demo_trigger(
+            api_base=args.api_base,
+            platform=args.platform,
+            keywords=args.keywords,
+            creator_ids=args.creator_ids,
+            interval_minutes=args.interval_minutes,
+            timeout=args.api_timeout,
+            headless=args.headless,
+            save_option=args.save_option,
+        )
+        steps.append(
+            {
+                "name": "demo_trigger",
+                "ok": bool(demo_payload.get("ok", False)),
+                "required": bool(args.strict),
+                "detail": str(demo_payload.get("detail", "demo trigger failed")),
+                "payload": demo_payload,
+            }
+        )
+
+    payload = {
+        "quickstart_ok": all(step.get("ok", False) or not step.get("required", True) for step in steps),
+        "strict": bool(args.strict),
+        "non_interactive": bool(args.non_interactive),
+        "steps": steps,
+    }
+    payload["next_steps"] = _build_quickstart_next_steps(
+        payload,
+        api_base=args.api_base,
+        platform=args.platform,
+    )
+
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        for step in payload["steps"]:
+            if step.get("ok"):
+                status = "PASS"
+            elif step.get("required", True):
+                status = "FAIL"
+            elif step.get("skipped"):
+                status = "SKIP"
+            else:
+                status = "WARN"
+            print(f"[quickstart] {status}: {step.get('name')} - {step.get('detail', '')}")
+        print("[quickstart] Next steps:")
+        for index, line in enumerate(payload["next_steps"], start=1):
+            print(f"{index}) {line}")
+
+    return 0 if payload["quickstart_ok"] else 1
 
 
 def _add_doctor_arguments(parser: argparse.ArgumentParser) -> None:
@@ -2192,6 +2629,7 @@ def _build_parser() -> argparse.ArgumentParser:
         description="EnergyCrawler unified CLI",
         epilog=(
             "Examples:\n"
+            "  uv run energycrawler quickstart --non-interactive\n"
             "  uv run energycrawler setup\n"
             "  uv run energycrawler status\n"
             "  uv run energycrawler run --platform xhs --keywords 新能源\n"
@@ -2561,9 +2999,57 @@ def _build_parser() -> argparse.ArgumentParser:
     setup_parser.add_argument("--storage-check", action="store_true")
     setup_parser.add_argument("--skip-browser-check", action="store_true")
     setup_parser.add_argument("--skip-login-readiness", action="store_true")
+    setup_parser.add_argument(
+        "--question-set",
+        choices=list(SETUP_QUESTION_SET_CHOICES),
+        default=SETUP_DEFAULT_QUESTION_SET,
+        help="Setup prompts scope (default: minimal)",
+    )
     setup_parser.add_argument("--strict", action="store_true")
     setup_parser.add_argument("--json", action="store_true")
     setup_parser.set_defaults(handler=_setup_cmd)
+
+    quickstart_parser = subparsers.add_parser(
+        "quickstart",
+        help="One-command onboarding quickstart (non-interactive friendly)",
+    )
+    quickstart_parser.add_argument("--template", default=".env.quickstart.example")
+    quickstart_parser.add_argument("--env-file", default=".env")
+    quickstart_parser.add_argument("--force", action="store_true")
+    quickstart_parser.add_argument("--host", default=DEFAULT_HOST)
+    quickstart_parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    quickstart_parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT)
+    quickstart_parser.add_argument("--retries", type=int, default=DEFAULT_ENSURE_RETRIES)
+    quickstart_parser.add_argument("--sleep", type=float, default=DEFAULT_ENSURE_SLEEP)
+    quickstart_parser.add_argument(
+        "--api-base",
+        default=DEFAULT_API_BASE,
+        help="API base URL (default: ENERGYCRAWLER_API_BASE or http://127.0.0.1:8080)",
+    )
+    quickstart_parser.add_argument("--api-timeout", type=float, default=DEFAULT_API_TIMEOUT)
+    quickstart_parser.add_argument("--platform", choices=["xhs", "x"], default="xhs")
+    quickstart_parser.add_argument("--keywords", default="新能源,储能")
+    quickstart_parser.add_argument(
+        "--creator-ids",
+        default="60d5b32a000000002002cf79,6522c385000000002a034681",
+    )
+    quickstart_parser.add_argument("--interval-minutes", type=int, default=60)
+    quickstart_parser.add_argument(
+        "--save-option",
+        choices=["json", "csv", "excel", "sqlite", "db", "mongodb", "postgres"],
+        default="json",
+    )
+    quickstart_parser.add_argument(
+        "--headless",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    quickstart_parser.add_argument("--storage-check", action="store_true")
+    quickstart_parser.add_argument("--skip-demo", action="store_true")
+    quickstart_parser.add_argument("--non-interactive", action="store_true")
+    quickstart_parser.add_argument("--strict", action="store_true")
+    quickstart_parser.add_argument("--json", action="store_true")
+    quickstart_parser.set_defaults(handler=_quickstart_cmd)
 
     config_parser = subparsers.add_parser("config", help="Configuration helpers")
     config_subparsers = config_parser.add_subparsers(dest="config_command", required=True)
@@ -2579,7 +3065,7 @@ def _build_parser() -> argparse.ArgumentParser:
     config_show_parser.set_defaults(handler=_config_show_cmd)
 
     config_env_parser = config_subparsers.add_parser("env", help="Show environment variables by complexity")
-    config_env_parser.add_argument("--mode", choices=["core", "advanced", "all"], default="core")
+    config_env_parser.add_argument("--mode", choices=["minimal", "core", "advanced", "all"], default="core")
     config_env_parser.add_argument("--show-secrets", action="store_true")
     config_env_parser.add_argument("--json", action="store_true")
     config_env_parser.set_defaults(handler=_config_env_cmd)

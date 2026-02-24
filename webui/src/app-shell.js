@@ -1,6 +1,19 @@
 import { formatDateTime } from "./lib/time.js";
 
+export const ONBOARDING_COMPLETED_STORAGE_KEY = "energycrawler_ui_onboarding_completed_at";
+const FIRST_RUN_ROUTE_ID = "welcome";
+const DEFAULT_ROUTE_ID = "dashboard";
+
 export const DEFAULT_ROUTES = [
+  {
+    id: "welcome",
+    label: "Welcome",
+    hash: "#/welcome",
+    title: "Welcome / Onboarding",
+    modulePath: "./pages/welcome.js",
+    description: "新手引导：环境健康、鉴权状态、Demo 运行与数据浏览。",
+    showInNav: false,
+  },
   {
     id: "dashboard",
     label: "Dashboard",
@@ -51,11 +64,28 @@ export const DEFAULT_ROUTES = [
   },
 ];
 
-function normalizeHash(hash) {
-  if (!hash || hash === "#") return "#/dashboard";
+function normalizeHash(hash, fallbackHash = "#/dashboard") {
+  if (!hash || hash === "#") return fallbackHash;
   if (hash.startsWith("#/")) return hash;
   if (hash.startsWith("#")) return `#/${hash.slice(1)}`;
   return `#/${hash}`;
+}
+
+function safeReadStorage(storage, key, fallback = "") {
+  try {
+    if (!storage || typeof storage.getItem !== "function") return fallback;
+    const value = storage.getItem(key);
+    return value === null ? fallback : value;
+  } catch {
+    return fallback;
+  }
+}
+
+function hasCompletedOnboarding(storage = globalThis?.localStorage) {
+  const raw = String(safeReadStorage(storage, ONBOARDING_COMPLETED_STORAGE_KEY, "")).trim();
+  if (!raw) return false;
+  if (raw === "false" || raw === "0") return false;
+  return true;
 }
 
 function isDomNode(value) {
@@ -78,13 +108,14 @@ export class AppShell {
     this.boundOnHashChange = this.onHashChange.bind(this);
     this.renderToken = 0;
     this.activeRouteCleanup = null;
+    this.defaultRouteId = this.resolveDefaultRouteId();
   }
 
   start() {
     this.renderNav();
     window.addEventListener("hashchange", this.boundOnHashChange);
     if (!window.location.hash) {
-      this.navigate("dashboard", { replace: true });
+      this.navigate(this.defaultRouteId, { replace: true });
     } else {
       this.renderCurrentRoute();
     }
@@ -130,10 +161,21 @@ export class AppShell {
     this.activeRouteCleanup = null;
   }
 
+  resolveDefaultRouteId() {
+    if (this.routeMap.has(FIRST_RUN_ROUTE_ID) && !hasCompletedOnboarding()) {
+      return FIRST_RUN_ROUTE_ID;
+    }
+    if (this.routeMap.has(DEFAULT_ROUTE_ID)) {
+      return DEFAULT_ROUTE_ID;
+    }
+    return this.routes[0]?.id || DEFAULT_ROUTE_ID;
+  }
+
   resolveCurrentRoute() {
-    const normalized = normalizeHash(window.location.hash);
-    const routeId = normalized.replace(/^#\//, "").split("?")[0] || "dashboard";
-    return this.routeMap.get(routeId) || this.routeMap.get("dashboard");
+    const defaultHash = this.routeMap.get(this.defaultRouteId)?.hash || "#/dashboard";
+    const normalized = normalizeHash(window.location.hash, defaultHash);
+    const routeId = normalized.replace(/^#\//, "").split("?")[0] || this.defaultRouteId;
+    return this.routeMap.get(routeId) || this.routeMap.get(this.defaultRouteId);
   }
 
   createNavTab(route) {
@@ -157,7 +199,7 @@ export class AppShell {
 
   renderNav() {
     this.navEl.innerHTML = "";
-    this.routes.forEach((route) => {
+    this.routes.filter((route) => route.showInNav !== false).forEach((route) => {
       this.navEl.appendChild(this.createNavTab(route));
     });
     this.highlightRoute(this.resolveCurrentRoute());

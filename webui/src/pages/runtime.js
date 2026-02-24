@@ -450,6 +450,10 @@ export function mountRuntimePage(target, options = {}) {
         </div>
       </header>
 
+      <section class="rs-inline-note" data-tone="info">
+        新部署实例可先完成 <a href="#/welcome">Welcome 引导</a>，按步骤检查环境 / 鉴权 / Demo / 数据视图。
+      </section>
+
       <section class="rs-inline-note rs-status-banner" data-role="status-banner" data-tone="info" aria-live="polite">
         等待加载运行时快照...
       </section>
