@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>EnergyCrawler UI 2.0</title>
+    <link rel="stylesheet" href="/ui/styles.css" />
+  </head>
+  <body>
+    <div class="app" id="appRoot">
+      <header class="topbar">
+        <div class="brand">
+          <h1>EnergyCrawler UI 2.0</h1>
+          <p>配置 → 调度 → 运行 → 结果 → 诊断</p>
+        </div>
+        <div class="topbar-actions">
+          <label class="api-base-field" for="apiBaseInput">
+            <span>API Base</span>
+            <input id="apiBaseInput" placeholder="默认同源（留空）" />
+          </label>
+          <button id="saveApiBaseBtn" type="button" class="secondary">保存</button>
+        </div>
+      </header>
+
+      <nav id="moduleNav" class="module-nav" aria-label="UI 模块导航"></nav>
+
+      <main id="routeView" class="route-view" aria-live="polite"></main>
+    </div>
+
+    <div id="toastViewport" class="toast-viewport" aria-live="assertive" aria-atomic="true"></div>
+
+    <script type="module" src="/ui/src/main.js"></script>
+  </body>
+</html>

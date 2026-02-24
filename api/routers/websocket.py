@@ -17,13 +17,156 @@
 # 使用本代码即表示您同意遵守上述原则和LICENSE中的所有条款。
 
 import asyncio
-from typing import Set, Optional
+import os
+import re
+import time
+from typing import Any, Optional, Set
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 
-from ..services import crawler_manager
+from ..services import crawler_manager, scheduler_service
 
 router = APIRouter(tags=["websocket"])
+_TASK_ID_PATTERN = re.compile(r"\btask-[a-zA-Z0-9_-]+\b")
+_TASK_TO_RUN_ID_CACHE: dict[str, int] = {}
+_TASK_TO_RUN_ID_CACHE_SYNC_AT_MONOTONIC = 0.0
+_TASK_TO_RUN_ID_CACHE_TTL_SEC = 5.0
+_RUN_LOOKUP_LIMIT = 500
+_TRUTHY_ENV_VALUES = {"1", "true", "yes", "y", "on"}
+_DEFAULT_MAX_WS_CONNECTIONS = 200
+
+_WS_CONNECTIONS_LOCK = asyncio.Lock()
+_WS_ACTIVE_CONNECTIONS = 0
+
+
+def _env_flag(name: str, *, default: bool = False) -> bool:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    return raw_value.strip().lower() in _TRUTHY_ENV_VALUES
+
+
+def _env_int(name: str, *, default: int, minimum: int, maximum: int) -> int:
+    raw_value = (os.getenv(name, str(default)) or "").strip()
+    try:
+        parsed = int(raw_value)
+    except ValueError:
+        parsed = default
+    return max(minimum, min(parsed, maximum))
+
+
+def _extract_admin_token(websocket: WebSocket) -> str:
+    header_token = (websocket.headers.get("x-admin-token") or "").strip()
+    if header_token:
+        return header_token
+
+    authorization = (websocket.headers.get("authorization") or "").strip()
+    if authorization.lower().startswith("bearer "):
+        bearer = authorization[7:].strip()
+        if bearer:
+            return bearer
+
+    query_token = (
+        websocket.query_params.get("token")
+        or websocket.query_params.get("admin_token")
+        or ""
+    ).strip()
+    return query_token
+
+
+def _is_websocket_authorized(websocket: WebSocket) -> bool:
+    if not _env_flag("WEBSOCKET_REQUIRE_AUTH", default=False):
+        return True
+
+    expected_token = (os.getenv("WEBSOCKET_ADMIN_TOKEN", "") or "").strip()
+    if not expected_token:
+        return False
+
+    return _extract_admin_token(websocket) == expected_token
+
+
+def _max_ws_connections() -> int:
+    return _env_int(
+        "WEBSOCKET_MAX_CONNECTIONS",
+        default=_DEFAULT_MAX_WS_CONNECTIONS,
+        minimum=1,
+        maximum=10_000,
+    )
+
+
+async def _try_acquire_ws_slot() -> bool:
+    global _WS_ACTIVE_CONNECTIONS
+
+    max_connections = _max_ws_connections()
+    async with _WS_CONNECTIONS_LOCK:
+        if _WS_ACTIVE_CONNECTIONS >= max_connections:
+            return False
+        _WS_ACTIVE_CONNECTIONS += 1
+        return True
+
+
+async def _release_ws_slot() -> None:
+    global _WS_ACTIVE_CONNECTIONS
+
+    async with _WS_CONNECTIONS_LOCK:
+        _WS_ACTIVE_CONNECTIONS = max(0, _WS_ACTIVE_CONNECTIONS - 1)
+
+
+async def _reject_connection(websocket: WebSocket, *, code: int, reason: str) -> None:
+    await websocket.accept()
+    await websocket.close(code=code, reason=reason)
+
+
+def _extract_task_id(message: str) -> Optional[str]:
+    match = _TASK_ID_PATTERN.search(message or "")
+    return match.group(0) if match else None
+
+
+async def _refresh_task_to_run_cache(*, force: bool = False) -> None:
+    global _TASK_TO_RUN_ID_CACHE, _TASK_TO_RUN_ID_CACHE_SYNC_AT_MONOTONIC
+
+    now = time.monotonic()
+    if not force and (now - _TASK_TO_RUN_ID_CACHE_SYNC_AT_MONOTONIC) < _TASK_TO_RUN_ID_CACHE_TTL_SEC:
+        return
+
+    try:
+        runs = await scheduler_service.list_runs(job_id=None, limit=_RUN_LOOKUP_LIMIT)
+    except Exception:
+        return
+
+    mapping: dict[str, int] = {}
+    for run in runs:
+        task_id = str(run.get("task_id") or "").strip()
+        run_id = run.get("run_id")
+        if task_id and isinstance(run_id, int) and task_id not in mapping:
+            mapping[task_id] = run_id
+
+    _TASK_TO_RUN_ID_CACHE = mapping
+    _TASK_TO_RUN_ID_CACHE_SYNC_AT_MONOTONIC = now
+
+
+async def _resolve_run_id(task_id: str) -> Optional[int]:
+    if not task_id:
+        return None
+    cached = _TASK_TO_RUN_ID_CACHE.get(task_id)
+    if cached is not None:
+        return cached
+
+    await _refresh_task_to_run_cache(force=True)
+    return _TASK_TO_RUN_ID_CACHE.get(task_id)
+
+
+async def _enrich_log_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    enriched = dict(payload)
+    task_id = _extract_task_id(str(enriched.get("message", "")))
+    if not task_id:
+        return enriched
+
+    enriched["task_id"] = task_id
+    run_id = await _resolve_run_id(task_id)
+    if run_id is not None:
+        enriched["run_id"] = run_id
+    return enriched
 
 
 class ConnectionManager:
@@ -67,7 +210,7 @@ async def log_broadcaster():
             # Get log entry from queue
             entry = await queue.get()
             # Broadcast to all WebSocket connections
-            await manager.broadcast(entry.model_dump())
+            await manager.broadcast(await _enrich_log_payload(entry.model_dump()))
         except asyncio.CancelledError:
             break
         except Exception as e:
@@ -91,6 +234,22 @@ async def websocket_logs(websocket: WebSocket):
     """WebSocket log stream"""
     print("[WS] New connection attempt")
 
+    if not _is_websocket_authorized(websocket):
+        await _reject_connection(
+            websocket,
+            code=status.WS_1008_POLICY_VIOLATION,
+            reason="Unauthorized",
+        )
+        return
+
+    if not await _try_acquire_ws_slot():
+        await _reject_connection(
+            websocket,
+            code=status.WS_1013_TRY_AGAIN_LATER,
+            reason="Too many websocket connections",
+        )
+        return
+
     try:
         # Ensure broadcast task is running
         start_broadcaster()
@@ -99,9 +258,10 @@ async def websocket_logs(websocket: WebSocket):
         print(f"[WS] Connected, active connections: {len(manager.active_connections)}")
 
         # Send existing logs
+        await _refresh_task_to_run_cache()
         for log in crawler_manager.logs:
             try:
-                await websocket.send_json(log.model_dump())
+                await websocket.send_json(await _enrich_log_payload(log.model_dump()))
             except Exception as e:
                 print(f"[WS] Error sending existing log: {e}")
                 break
@@ -131,12 +291,29 @@ async def websocket_logs(websocket: WebSocket):
         print(f"[WS] Error: {type(e).__name__}: {e}")
     finally:
         manager.disconnect(websocket)
+        await _release_ws_slot()
         print(f"[WS] Cleanup done, active connections: {len(manager.active_connections)}")
 
 
 @router.websocket("/ws/status")
 async def websocket_status(websocket: WebSocket):
     """WebSocket status stream"""
+    if not _is_websocket_authorized(websocket):
+        await _reject_connection(
+            websocket,
+            code=status.WS_1008_POLICY_VIOLATION,
+            reason="Unauthorized",
+        )
+        return
+
+    if not await _try_acquire_ws_slot():
+        await _reject_connection(
+            websocket,
+            code=status.WS_1013_TRY_AGAIN_LATER,
+            reason="Too many websocket connections",
+        )
+        return
+
     await websocket.accept()
 
     try:
@@ -149,3 +326,5 @@ async def websocket_status(websocket: WebSocket):
         pass
     except Exception:
         pass
+    finally:
+        await _release_ws_slot()

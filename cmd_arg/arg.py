@@ -227,7 +227,7 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
                 help="Cookie value used for Cookie login method",
                 rich_help_panel="Account Configuration",
             ),
-        ] = config.COOKIES,
+        ] = "",
         specified_id: Annotated[
             str,
             typer.Option(
@@ -319,6 +319,7 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
         enable_incremental = _to_bool(incremental)
         enable_resume_checkpoint = _to_bool(resume_checkpoint)
         init_db_value = init_db.value if init_db else None
+        raw_cookies = (cookies or "").strip()
 
         # Parse specified_id and creator_id into lists
         specified_id_list = [id.strip() for id in specified_id.split(",") if id.strip()] if specified_id else []
@@ -335,7 +336,12 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
         config.HEADLESS = enable_headless
         config.ENERGY_HEADLESS = enable_headless
         config.SAVE_DATA_OPTION = save_data_option.value
-        config.COOKIES = cookies
+        if platform == PlatformEnum.XHS:
+            if raw_cookies:
+                config.COOKIES = raw_cookies
+        else:
+            # Keep xhs cookie store untouched when crawling X.
+            config.COOKIES = (getattr(config, "COOKIES", "") or "").strip()
         config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES = max_comments_count_singlenotes
         config.MAX_CONCURRENCY_NUM = max_concurrency_num
         config.CRAWLER_MAX_NOTES_COUNT = max_notes_count
@@ -359,14 +365,24 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
             elif platform == PlatformEnum.X:
                 config.TWITTER_USER_IDS = creator_id_list
 
-        # Keep Twitter auth config in sync with CLI cookies when crawling X.
-        if platform == PlatformEnum.X and cookies:
-            config.TWITTER_COOKIE = cookies
-            cookie_map = utils.convert_str_cookie_to_dict(cookies)
+        # Keep Twitter auth config in sync when crawling X.
+        if platform == PlatformEnum.X:
+            if raw_cookies:
+                config.TWITTER_COOKIE = raw_cookies
+            else:
+                config.TWITTER_COOKIE = (getattr(config, "TWITTER_COOKIE", "") or "").strip()
+
+            cookie_map = utils.convert_str_cookie_to_dict(config.TWITTER_COOKIE)
             if cookie_map.get("auth_token"):
                 config.TWITTER_AUTH_TOKEN = cookie_map["auth_token"]
             if cookie_map.get("ct0"):
                 config.TWITTER_CT0 = cookie_map["ct0"]
+
+        cookie_result = (
+            config.TWITTER_COOKIE
+            if platform == PlatformEnum.X
+            else config.COOKIES
+        )
 
         return SimpleNamespace(
             platform=config.PLATFORM,
@@ -379,7 +395,7 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
             headless=config.HEADLESS,
             save_data_option=config.SAVE_DATA_OPTION,
             init_db=init_db_value,
-            cookies=config.COOKIES,
+            cookies=cookie_result,
             specified_id=specified_id,
             creator_id=creator_id,
         )

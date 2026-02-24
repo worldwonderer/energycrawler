@@ -19,6 +19,7 @@
 import json
 import os
 from csv import DictReader
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -35,6 +36,23 @@ DATA_DIR = Path(__file__).parent.parent.parent / "data"
 SUPPORTED_EXTENSIONS = {".json", ".csv", ".xlsx", ".xls"}
 PREVIEW_SUPPORTED_EXTENSIONS = {".json", ".csv", ".xlsx", ".xls"}
 SUPPORTED_FILE_TYPES = ", ".join(ext[1:] for ext in sorted(SUPPORTED_EXTENSIONS))
+SUPPORTED_SORT_FIELDS = {"modified_at", "name", "size", "type", "record_count"}
+SUPPORTED_SORT_ORDERS = {"asc", "desc"}
+
+
+def _resolve_platform_roots(platform: Optional[str]) -> Optional[set[str]]:
+    if not platform:
+        return None
+
+    normalized = platform.strip().lower()
+    if not normalized:
+        return None
+
+    if normalized in {"x", "twitter"}:
+        return {"x", "twitter"}
+    if normalized in {"xhs", "xiaohongshu"}:
+        return {"xhs", "xiaohongshu"}
+    return {normalized}
 
 
 def _normalize_file_type(file_type: Optional[str]) -> Optional[str]:
@@ -59,7 +77,7 @@ def _iter_data_files(platform: Optional[str] = None, file_type: Optional[str] = 
         return []
 
     files: list[Path] = []
-    platform_filter = platform.lower() if platform else None
+    platform_roots = _resolve_platform_roots(platform)
 
     for root, _dirs, filenames in os.walk(DATA_DIR):
         root_path = Path(root)
@@ -69,8 +87,9 @@ def _iter_data_files(platform: Optional[str] = None, file_type: Optional[str] = 
             if suffix not in SUPPORTED_EXTENSIONS:
                 continue
 
-            rel_path = str(file_path.relative_to(DATA_DIR)).lower()
-            if platform_filter and platform_filter not in rel_path:
+            rel_parts = file_path.relative_to(DATA_DIR).parts
+            rel_root = rel_parts[0].lower() if rel_parts else ""
+            if platform_roots and rel_root not in platform_roots:
                 continue
 
             if normalized_file_type and suffix[1:] != normalized_file_type:
@@ -79,6 +98,83 @@ def _iter_data_files(platform: Optional[str] = None, file_type: Optional[str] = 
             files.append(file_path)
 
     return files
+
+
+def _normalize_sort_field(sort_by: str) -> str:
+    normalized = (sort_by or "").strip().lower()
+    if normalized not in SUPPORTED_SORT_FIELDS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unsupported sort field '{sort_by}'. "
+                f"Supported fields: {', '.join(sorted(SUPPORTED_SORT_FIELDS))}"
+            ),
+        )
+    return normalized
+
+
+def _normalize_sort_order(sort_order: str) -> str:
+    normalized = (sort_order or "").strip().lower()
+    if normalized not in SUPPORTED_SORT_ORDERS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unsupported sort order '{sort_order}'. "
+                f"Supported orders: {', '.join(sorted(SUPPORTED_SORT_ORDERS))}"
+            ),
+        )
+    return normalized
+
+
+def _sort_files(files: list[dict], *, sort_by: str, sort_order: str) -> None:
+    reverse = sort_order == "desc"
+    if sort_by in {"name", "type"}:
+        files.sort(key=lambda x: str(x.get(sort_by, "")).lower(), reverse=reverse)
+        return
+
+    files.sort(
+        key=lambda x: float(x.get(sort_by, -1) if x.get(sort_by) is not None else -1),
+        reverse=reverse,
+    )
+
+
+def _parse_date_bound(value: Optional[str], *, is_end: bool) -> Optional[datetime]:
+    if value is None:
+        return None
+
+    raw = value.strip()
+    if not raw:
+        return None
+
+    try:
+        if len(raw) == 10:
+            parsed = datetime.strptime(raw, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            if is_end:
+                return parsed + timedelta(days=1) - timedelta(microseconds=1)
+            return parsed
+
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        else:
+            parsed = parsed.astimezone(timezone.utc)
+        return parsed
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Invalid date value '{value}'. "
+                "Use YYYY-MM-DD or ISO-8601 datetime."
+            ),
+        ) from exc
+
+
+def _infer_platform_bucket(file_path: Path) -> Optional[str]:
+    rel_path = str(file_path.relative_to(DATA_DIR)).lower()
+    for platform in ["xhs", "x", "twitter"]:
+        if platform in rel_path:
+            return platform
+    return None
 
 
 def _resolve_safe_file_path(file_path: str) -> Path:
@@ -199,7 +295,14 @@ def get_file_info(file_path: Path) -> dict:
 
 
 @router.get("/files")
-async def list_data_files(platform: Optional[str] = None, file_type: Optional[str] = None):
+async def list_data_files(
+    platform: Optional[str] = None,
+    file_type: Optional[str] = None,
+    page: int = Query(default=1, ge=1),
+    page_size: Optional[int] = Query(default=None, ge=1, le=1000),
+    sort_by: str = Query(default="modified_at"),
+    sort_order: str = Query(default="desc"),
+):
     """Get data file list"""
     files = []
     for file_path in _iter_data_files(platform=platform, file_type=file_type):
@@ -208,10 +311,31 @@ async def list_data_files(platform: Optional[str] = None, file_type: Optional[st
         except Exception:
             continue
 
-    # Sort by modification time (newest first)
-    files.sort(key=lambda x: x["modified_at"], reverse=True)
+    normalized_sort_by = _normalize_sort_field(sort_by)
+    normalized_sort_order = _normalize_sort_order(sort_order)
+    _sort_files(files, sort_by=normalized_sort_by, sort_order=normalized_sort_order)
 
-    return success_response({"files": files}, message="Data files")
+    total = len(files)
+    if page_size is None:
+        paged_files = files
+        total_pages = 1 if total > 0 else 0
+    else:
+        offset = (page - 1) * page_size
+        paged_files = files[offset:offset + page_size]
+        total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+
+    return success_response(
+        {
+            "files": paged_files,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": total_pages,
+            "sort_by": normalized_sort_by,
+            "sort_order": normalized_sort_order,
+        },
+        message="Data files",
+    )
 
 
 @router.get("/latest")
@@ -257,11 +381,36 @@ async def download_file(file_path: str):
 
 
 @router.get("/stats")
-async def get_data_stats():
+async def get_data_stats(
+    platform: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    from_param: Optional[str] = Query(default=None, alias="from"),
+    to_param: Optional[str] = Query(default=None, alias="to"),
+):
     """Get data statistics"""
+    effective_date_from = date_from or from_param
+    effective_date_to = date_to or to_param
+
+    start_dt = _parse_date_bound(effective_date_from, is_end=False)
+    end_dt = _parse_date_bound(effective_date_to, is_end=True)
+    if start_dt and end_dt and start_dt > end_dt:
+        raise HTTPException(status_code=400, detail="date_from must be less than or equal to date_to")
+
     if not DATA_DIR.exists():
         return success_response(
-            {"total_files": 0, "total_size": 0, "by_platform": {}, "by_type": {}},
+            {
+                "total_files": 0,
+                "total_size": 0,
+                "by_platform": {},
+                "by_type": {},
+                "by_date": {},
+                "filters": {
+                    "platform": platform,
+                    "date_from": effective_date_from,
+                    "date_to": effective_date_to,
+                },
+            },
             message="Data statistics",
         )
 
@@ -269,32 +418,37 @@ async def get_data_stats():
         "total_files": 0,
         "total_size": 0,
         "by_platform": {},
-        "by_type": {}
+        "by_type": {},
+        "by_date": {},
+        "filters": {
+            "platform": platform,
+            "date_from": effective_date_from,
+            "date_to": effective_date_to,
+        },
     }
 
-    for root, _dirs, filenames in os.walk(DATA_DIR):
-        root_path = Path(root)
-        for filename in filenames:
-            file_path = root_path / filename
-            if file_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+    for file_path in _iter_data_files(platform=platform):
+        try:
+            stat = file_path.stat()
+            modified_at = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
+            if start_dt and modified_at < start_dt:
+                continue
+            if end_dt and modified_at > end_dt:
                 continue
 
-            try:
-                stat = file_path.stat()
-                stats["total_files"] += 1
-                stats["total_size"] += stat.st_size
+            stats["total_files"] += 1
+            stats["total_size"] += stat.st_size
 
-                # Statistics by type
-                file_type = file_path.suffix[1:].lower()
-                stats["by_type"][file_type] = stats["by_type"].get(file_type, 0) + 1
+            file_type = file_path.suffix[1:].lower()
+            stats["by_type"][file_type] = stats["by_type"].get(file_type, 0) + 1
 
-                # Statistics by platform (inferred from path)
-                rel_path = str(file_path.relative_to(DATA_DIR))
-                for platform in ["xhs", "x", "twitter"]:
-                    if platform in rel_path.lower():
-                        stats["by_platform"][platform] = stats["by_platform"].get(platform, 0) + 1
-                        break
-            except Exception:
-                continue
+            platform_bucket = _infer_platform_bucket(file_path)
+            if platform_bucket:
+                stats["by_platform"][platform_bucket] = stats["by_platform"].get(platform_bucket, 0) + 1
+
+            date_bucket = modified_at.date().isoformat()
+            stats["by_date"][date_bucket] = stats["by_date"].get(date_bucket, 0) + 1
+        except Exception:
+            continue
 
     return success_response(stats, message="Data statistics")

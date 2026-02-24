@@ -72,6 +72,10 @@ def test_parser_includes_setup_config_show_and_precheck():
     assert run_args.command == "run"
     assert run_args.handler is cli._run_simple_cmd
 
+    status_args = parser.parse_args(["status", "--json"])
+    assert status_args.command == "status"
+    assert status_args.handler is cli._status_cmd
+
 
 def test_collect_runtime_config_masks_sensitive_values(monkeypatch):
     fake_config = SimpleNamespace(

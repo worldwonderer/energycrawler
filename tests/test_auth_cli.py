@@ -14,6 +14,16 @@ def test_open_login_parser_defaults_to_empty_browser_id():
 
     assert args.command == "xhs-open-login"
     assert args.browser_id == ""
+    assert args.verify is True
+
+
+def test_xhs_login_parser_available_with_verify_toggle():
+    parser = auth_cli._build_parser()
+    args = parser.parse_args(["xhs-login", "--no-verify"])
+
+    assert args.command == "xhs-login"
+    assert args.verify is False
+    assert args.handler is auth_cli._xhs_login_cmd
 
 
 def test_xhs_open_login_cmd_omits_browser_id_when_empty(monkeypatch):
@@ -34,6 +44,7 @@ def test_xhs_open_login_cmd_omits_browser_id_when_empty(monkeypatch):
         headless=False,
         poll_interval=2.0,
         timeout_sec=300.0,
+        verify=True,
         json=False,
     )
 
@@ -43,6 +54,7 @@ def test_xhs_open_login_cmd_omits_browser_id_when_empty(monkeypatch):
     assert captured["script_name"] == "xhs_open_login_and_sync.py"
     forwarded = captured["args"]
     assert "--browser-id" not in forwarded
+    assert "--no-verify" not in forwarded
 
 
 def test_xhs_open_login_cmd_passes_browser_id_when_provided(monkeypatch):
@@ -63,6 +75,7 @@ def test_xhs_open_login_cmd_passes_browser_id_when_provided(monkeypatch):
         headless=False,
         poll_interval=2.0,
         timeout_sec=300.0,
+        verify=False,
         json=False,
     )
 
@@ -72,3 +85,20 @@ def test_xhs_open_login_cmd_passes_browser_id_when_provided(monkeypatch):
     forwarded = captured["args"]
     idx = forwarded.index("--browser-id")
     assert forwarded[idx + 1] == "manual_login_xhs"
+    assert "--no-verify" in forwarded
+
+
+def test_xhs_login_alias_reuses_open_login_flow(monkeypatch):
+    called = {"count": 0}
+
+    def _fake_open_login(args):
+        called["count"] += 1
+        return 0
+
+    monkeypatch.setattr(auth_cli, "_xhs_open_login_cmd", _fake_open_login)
+    ns = argparse.Namespace()
+
+    code = auth_cli._xhs_login_cmd(ns)
+
+    assert code == 0
+    assert called["count"] == 1

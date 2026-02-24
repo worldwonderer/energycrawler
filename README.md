@@ -162,13 +162,19 @@ AUTH_WATCHDOG_MAX_RUNTIME_RECOVERIES=1
 uv run energycrawler auth status --host localhost --port 50051
 ```
 
-推荐登录流（直接打开小红书登录页，在 Energy 内完成扫码/确认，再自动同步）：
+推荐登录流（`open + sync + verify`：直接打开小红书登录页，在 Energy 内完成扫码/确认，再自动同步并校验登录态）：
 
 ```bash
 uv run energycrawler auth xhs-open-login --api-base http://localhost:8080
 ```
 
 > 不传 `--browser-id` 时会自动生成隔离会话 ID，并在输出中打印。
+
+登录完成后，建议立刻查看运行态快照：
+
+```bash
+uv run energycrawler status
+```
 
 如果你已经在 Energy 浏览器里登录了 XHS，也可直接同步该会话（无需再打开登录页）：
 
@@ -233,16 +239,23 @@ uv run energycrawler auth xhs-qr-login --api-base http://localhost:8080
 
 ### 4. 极简模式（推荐）
 
-如果你不想记一堆参数，直接按 3 步走：
+如果你不想记一堆参数，直接按 5 步走：
 
 ```bash
 # 1) 初始化与体检
 uv run energycrawler setup
 
-# 2) 用简化命令抓取（默认 balanced 安全档）
+# 2) （xhs 推荐）一键登录向导：open + sync + verify
+uv run energycrawler auth xhs-open-login --api-base http://localhost:8080
+
+# 3) 查看运行态快照
+uv run energycrawler status
+
+# 4) 用简化命令抓取（默认 balanced 安全档）
 uv run energycrawler run --platform xhs --keywords 新能源
 
-# 3) 取最新结果
+# 5) 列出并下载结果
+uv run energycrawler data list --platform xhs --limit 20
 uv run energycrawler data latest --download
 ```
 
@@ -286,7 +299,7 @@ uv run energycrawler doctor --skip-login-check --json
 
 - `doctor` 报 `uv command not found`：先安装并配置 [uv](https://docs.astral.sh/uv/getting-started/installation/)
 - `doctor` 报 Energy 健康检查失败：先执行 `uv run energycrawler energy ensure`
-- `doctor` 报登录态失败：先执行 `uv run energycrawler auth status --json`，确认 Cookie/Token 有效
+- `doctor` 报登录态失败：先执行 `uv run energycrawler auth status --json`；若 `xhs` 仍失败，执行 `uv run energycrawler auth xhs-open-login --api-base http://localhost:8080`，再用 `uv run energycrawler status` 复核
 
 ### 6. 运行 CLI（进阶）
 
@@ -352,6 +365,9 @@ uv run energycrawler crawl -- --help
 快速查看/下载最新导出数据（通过 API）：
 
 ```bash
+# 先列出可用导出文件（按更新时间倒序）
+uv run energycrawler data list --platform xhs --limit 20
+
 # 预览最新文件摘要
 uv run energycrawler data latest --platform xhs
 
@@ -379,6 +395,11 @@ uv run energycrawler cleanup-report --json
 uv run uvicorn api.main:app --port 8080 --reload
 ```
 
+启动后可访问：
+
+- OpenAPI 文档：`http://localhost:8080/docs`
+- Web UI 控制台：`http://localhost:8080/ui`
+
 常用接口：
 
 - `POST /api/crawler/start`：提交任务
@@ -401,6 +422,13 @@ uv run uvicorn api.main:app --port 8080 --reload
 - `GET /api/health/runtime`：查看运行态健康快照（Energy / 登录态 / 队列）
 - `GET /api/ws/logs`：实时日志 WebSocket（`ws://localhost:8080/api/ws/logs`）
 - `GET /api/ws/status`：实时状态 WebSocket（`ws://localhost:8080/api/ws/status`）
+- `POST /api/scheduler/jobs`：创建调度任务（`keyword` / `kol`）
+- `GET /api/scheduler/jobs`：查看调度任务列表
+- `PATCH /api/scheduler/jobs/{job_id}`：更新调度任务（启停/间隔/payload）
+- `DELETE /api/scheduler/jobs/{job_id}`：删除调度任务
+- `POST /api/scheduler/jobs/{job_id}/run-now`：立即执行一次调度任务
+- `GET /api/scheduler/runs`：查看调度执行历史
+- `GET /api/scheduler/status`：查看调度器运行状态
 
 `POST /api/crawler/start` 支持额外安全参数：
 
@@ -454,6 +482,10 @@ curl -L "http://localhost:8080/api/data/latest/download?platform=xhs" -o "./late
 查看运行态健康快照：
 
 ```bash
+# CLI 统一状态快照（推荐）
+uv run energycrawler status --json
+
+# 直接调用 API
 curl -s http://localhost:8080/api/health/runtime | jq .
 ```
 
@@ -466,6 +498,62 @@ logsWs.onopen = () => logsWs.send("ping");
 
 const statusWs = new WebSocket("ws://localhost:8080/api/ws/status");
 statusWs.onmessage = (ev) => console.log("[status]", JSON.parse(ev.data));
+```
+
+关键词/KOL 自动调度（固定间隔）：
+
+```bash
+# 可选：调度器运行参数
+# SCHEDULER_ENABLED=true
+# SCHEDULER_POLL_INTERVAL_SEC=10
+# SCHEDULER_DB_PATH=./data/scheduler/scheduler.db
+
+# 创建关键词调度任务（每 30 分钟）
+curl -s -X POST http://localhost:8080/api/scheduler/jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name":"xhs-新能源关键词",
+    "job_type":"keyword",
+    "platform":"xhs",
+    "interval_minutes":30,
+    "enabled":true,
+    "payload":{
+      "keywords":"新能源,储能",
+      "save_option":"json",
+      "safety_profile":"balanced",
+      "headless":false
+    }
+  }' | jq .
+
+# 创建 KOL 调度任务（每 60 分钟）
+curl -s -X POST http://localhost:8080/api/scheduler/jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name":"x-kol-creator",
+    "job_type":"kol",
+    "platform":"x",
+    "interval_minutes":60,
+    "enabled":true,
+    "payload":{
+      "creator_ids":"elonmusk",
+      "save_option":"json",
+      "safety_profile":"safe",
+      "headless":false
+    }
+  }' | jq .
+
+# 查看任务与运行历史
+curl -s http://localhost:8080/api/scheduler/jobs | jq .
+curl -s http://localhost:8080/api/scheduler/runs?limit=20 | jq .
+```
+
+一键跑“关键词 + KOL”调度冒烟（自动创建临时任务、触发 run-now、轮询完成、校验数据变化并默认清理任务）：
+
+```bash
+uv run energycrawler scheduler smoke-e2e --platform xhs
+
+# 查看完整 JSON 报告
+uv run energycrawler scheduler smoke-e2e --platform xhs --json
 ```
 
 ## 测试

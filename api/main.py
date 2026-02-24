@@ -32,16 +32,25 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from tools.preflight import check_energy_service_reachable, parse_cookie_header
 
 from config.runtime_snapshot import API_CONFIG_RESPONSE_EXAMPLE, build_public_runtime_config
 
-from .routers import crawler_router, data_router, websocket_router, auth_router
+from .routers import (
+    crawler_router,
+    data_router,
+    websocket_router,
+    auth_router,
+    scheduler_router,
+    diagnostics_router,
+)
 from .response import ApiError, error_response, status_to_error_code, success_response
 from .schemas import SaveDataOptionEnum, SafetyProfileEnum
-from .services import crawler_manager
+from .services import crawler_manager, scheduler_service
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+WEB_UI_DIR = PROJECT_ROOT / "webui"
 ENV_CHECK_TIMEOUT_SECONDS = 30.0
 ENV_CHECK_OUTPUT_LIMIT = 500
 ALLOWED_ORIGINS = [
@@ -80,6 +89,19 @@ app.include_router(crawler_router, prefix="/api")
 app.include_router(data_router, prefix="/api")
 app.include_router(websocket_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
+app.include_router(scheduler_router, prefix="/api")
+app.include_router(diagnostics_router, prefix="/api")
+app.mount("/ui", StaticFiles(directory=str(WEB_UI_DIR), html=True), name="web-ui")
+
+
+@app.on_event("startup")
+async def startup_scheduler_service():
+    await scheduler_service.start()
+
+
+@app.on_event("shutdown")
+async def shutdown_scheduler_service():
+    await scheduler_service.stop()
 
 
 @app.exception_handler(ApiError)
@@ -141,6 +163,7 @@ async def root():
             "service": "EnergyCrawler API",
             "version": "1.0.0",
             "docs": "/docs",
+            "web_ui": "/ui",
         },
         message="Service info",
     )

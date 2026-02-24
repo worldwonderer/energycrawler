@@ -46,11 +46,14 @@ uv run energycrawler config env --mode advanced
 uv run energycrawler doctor
 ```
 
-### 4.1 极简 3 步（推荐）
+### 4.1 极简路径（推荐）
 
 ```bash
 uv run energycrawler setup
+uv run energycrawler auth xhs-open-login --api-base http://localhost:8080
+uv run energycrawler status
 uv run energycrawler run --platform xhs --keywords 新能源
+uv run energycrawler data list --platform xhs --limit 20
 uv run energycrawler data latest --download
 ```
 
@@ -72,9 +75,19 @@ uv run energycrawler crawl -- --help
 # 一键环境体检
 uv run energycrawler doctor
 
+# 运行态快照（推荐）
+uv run energycrawler status
+
 # 通过 API 快速预览/下载最新导出数据
+uv run energycrawler data list --platform xhs --limit 20
 uv run energycrawler data latest --platform xhs
 uv run energycrawler data latest --download --platform x --output ./downloads/
+
+# 调度器（关键词/KOL 固定间隔）
+uv run energycrawler scheduler create-keyword --name xhs-新能源 --platform xhs --interval-minutes 30 --keywords 新能源
+uv run energycrawler scheduler create-kol --name x-kol --platform x --interval-minutes 60 --creator-ids elonmusk
+uv run energycrawler scheduler list
+uv run energycrawler scheduler runs --limit 20
 
 # 严格清理报告（含旧命令/绝对路径/尾随空格）
 uv run energycrawler cleanup-report --json
@@ -86,7 +99,8 @@ uv run energycrawler cleanup-report --json
 uv run uvicorn api.main:app --port 8080 --reload
 ```
 
-访问接口文档：`http://localhost:8080/docs`。
+访问接口文档：`http://localhost:8080/docs`。  
+访问 Web UI 控制台：`http://localhost:8080/ui`。
 
 > 说明：CLI 运行时会为每次任务自动生成独立 `ENERGYCRAWLER_BROWSER_ID`，默认隔离 xhs/x 浏览器会话。
 
@@ -95,6 +109,7 @@ uv run uvicorn api.main:app --port 8080 --reload
 查看运行态健康快照（Energy / 登录态 / 队列）：
 
 ```bash
+uv run energycrawler status --json
 curl -s http://localhost:8080/api/health/runtime | jq .
 ```
 

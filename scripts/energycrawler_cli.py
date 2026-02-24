@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import importlib
 import json
 import os
@@ -14,6 +15,7 @@ import socket
 import sqlite3
 import subprocess
 import sys
+import time
 from typing import Any, Sequence
 import urllib.error
 import urllib.parse
@@ -668,8 +670,25 @@ def _build_api_url(api_base: str, endpoint: str, params: dict[str, Any] | None =
     return f"{base}{path}?{urllib.parse.urlencode(query_items)}"
 
 
-def _api_fetch(url: str, *, timeout: float = DEFAULT_API_TIMEOUT) -> tuple[int, bytes, dict[str, str]]:
-    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+def _api_request(
+    *,
+    url: str,
+    method: str = "GET",
+    payload: dict[str, Any] | None = None,
+    timeout: float = DEFAULT_API_TIMEOUT,
+) -> tuple[int, bytes, dict[str, str]]:
+    body: bytes | None = None
+    headers = {"Accept": "application/json"}
+    if payload is not None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+
+    req = urllib.request.Request(
+        url,
+        data=body,
+        headers=headers,
+        method=method,
+    )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as response:
             status = int(getattr(response, "status", response.getcode()))
@@ -682,6 +701,10 @@ def _api_fetch(url: str, *, timeout: float = DEFAULT_API_TIMEOUT) -> tuple[int, 
     except urllib.error.URLError as exc:
         reason = getattr(exc, "reason", exc)
         raise ConnectionError(str(reason)) from exc
+
+
+def _api_fetch(url: str, *, timeout: float = DEFAULT_API_TIMEOUT) -> tuple[int, bytes, dict[str, str]]:
+    return _api_request(url=url, method="GET", timeout=timeout)
 
 
 def _parse_json_bytes(raw: bytes) -> dict[str, Any] | None:
@@ -745,6 +768,228 @@ def _print_latest_preview_summary(payload: dict[str, Any]) -> None:
     print(f"[data latest] records={total}")
 
 
+def _print_next_steps(prefix: str, steps: Sequence[str], *, stream: Any) -> None:
+    actionable = [str(step).strip() for step in steps if str(step).strip()]
+    if not actionable:
+        return
+    print(f"{prefix} Actionable next steps:", file=stream)
+    for index, step in enumerate(actionable, start=1):
+        print(f"{index}) {step}", file=stream)
+
+
+def _build_api_unreachable_hints(*, api_base: str) -> list[str]:
+    normalized = _normalize_api_base(api_base)
+    return [
+        "Start API service: uv run uvicorn api.main:app --port 8080 --reload",
+        f"Verify API health: curl -s {normalized}/api/health",
+        "Ensure Energy service is ready: uv run energycrawler energy ensure",
+    ]
+
+
+def _build_no_data_file_hints(*, platform: str | None) -> list[str]:
+    platform_hint = (platform or "xhs").strip() or "xhs"
+    return [
+        f"Run a crawl first: uv run energycrawler run --platform {platform_hint} --keywords 新能源",
+        "Then retry file list: uv run energycrawler data list",
+        f"Or preview latest file: uv run energycrawler data latest --platform {platform_hint}",
+    ]
+
+
+def _format_modified_at(value: Any) -> str:
+    try:
+        timestamp = float(value)
+        return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
+    except Exception:
+        return str(value)
+
+
+def _build_status_next_steps(runtime_data: dict[str, Any], *, api_base: str) -> list[str]:
+    steps: list[str] = []
+    energy = runtime_data.get("energy")
+    if isinstance(energy, dict) and not bool(energy.get("ok", False)):
+        steps.append("Recover Energy service: uv run energycrawler energy ensure")
+        steps.append("Probe Energy health details: uv run energycrawler energy check --json")
+
+    login = runtime_data.get("login")
+    if isinstance(login, dict):
+        xhs = login.get("xhs")
+        if isinstance(xhs, dict) and not bool(xhs.get("ok", False)):
+            steps.append(
+                f"Finish XHS open+sync+verify flow: uv run energycrawler auth xhs-open-login --api-base {_normalize_api_base(api_base)}"
+            )
+        x_login = login.get("x")
+        if isinstance(x_login, dict) and not bool(x_login.get("ok", False)):
+            steps.append("Repair X login material: uv run energycrawler auth status --json")
+
+    queue = runtime_data.get("crawler_queue")
+    if isinstance(queue, dict) and not bool(queue.get("healthy", True)):
+        steps.append("Inspect crawler queue/runtime: uv run energycrawler doctor --json")
+
+    if not steps:
+        steps.append("Run full diagnostics: uv run energycrawler doctor --json")
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for step in steps:
+        if step in seen:
+            continue
+        seen.add(step)
+        deduped.append(step)
+    return deduped
+
+
+def _print_status_summary(payload: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
+    data = payload.get("data")
+    runtime_data = data if isinstance(data, dict) else payload
+    if not isinstance(runtime_data, dict):
+        runtime_data = {}
+
+    overall_status = str(runtime_data.get("overall_status", "unknown"))
+    checked_at = str(runtime_data.get("checked_at", "unknown"))
+    overall_healthy = bool(runtime_data.get("overall_healthy", False))
+
+    print(f"[status] overall={overall_status} healthy={overall_healthy} checked_at={checked_at}")
+
+    energy = runtime_data.get("energy", {})
+    if isinstance(energy, dict):
+        print(f"[status] energy_ok={bool(energy.get('ok', False))} message={energy.get('message', '')}")
+
+    login = runtime_data.get("login", {})
+    if isinstance(login, dict):
+        for platform in ("xhs", "x"):
+            item = login.get(platform, {})
+            if isinstance(item, dict):
+                print(
+                    f"[status] login_{platform}_ok={bool(item.get('ok', False))} "
+                    f"message={item.get('message', '')}"
+                )
+
+    queue = runtime_data.get("crawler_queue", {})
+    if isinstance(queue, dict):
+        print(
+            "[status] queue_healthy="
+            f"{bool(queue.get('healthy', False))} status={queue.get('status', 'unknown')} "
+            f"running={queue.get('running_workers', 0)}/{queue.get('total_workers', 0)} "
+            f"queued={queue.get('queued_tasks', 0)}"
+        )
+
+    return overall_healthy, runtime_data
+
+
+def _status_cmd(args: argparse.Namespace) -> int:
+    try:
+        url = _build_api_url(args.api_base, "/api/health/runtime")
+        status, body, _headers = _api_fetch(url, timeout=args.timeout)
+        payload = _parse_json_bytes(body)
+        if status != 200:
+            message = _extract_api_error_message(payload, f"HTTP {status}")
+            print(f"[status] Runtime status check failed (HTTP {status}): {message}", file=sys.stderr)
+            _print_next_steps("[status]", _build_api_unreachable_hints(api_base=args.api_base), stream=sys.stderr)
+            return 1
+
+        if payload is None:
+            print("[status] Invalid JSON response from API", file=sys.stderr)
+            _print_next_steps("[status]", _build_api_unreachable_hints(api_base=args.api_base), stream=sys.stderr)
+            return 1
+
+        data = payload.get("data", {}) if isinstance(payload, dict) else {}
+        overall_healthy = bool(data.get("overall_healthy", False)) if isinstance(data, dict) else False
+
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+            return 0 if overall_healthy else 1
+
+        healthy, runtime_data = _print_status_summary(payload)
+        if healthy:
+            print("[status] Summary: all runtime checks passed")
+            return 0
+
+        _print_next_steps(
+            "[status]",
+            _build_status_next_steps(runtime_data, api_base=args.api_base),
+            stream=sys.stdout,
+        )
+        return 1
+    except ConnectionError as exc:
+        print(f"[status] API unreachable: {exc}", file=sys.stderr)
+        _print_next_steps("[status]", _build_api_unreachable_hints(api_base=args.api_base), stream=sys.stderr)
+        return 2
+
+
+def _print_data_list_summary(files: Sequence[dict[str, Any]], *, limit: int) -> None:
+    shown = list(files[:limit])
+    print(f"[data list] total_files={len(files)} showing={len(shown)}")
+    for index, item in enumerate(shown, start=1):
+        path = str(item.get("path", item.get("name", "unknown")))
+        file_type = str(item.get("type", "unknown"))
+        records = item.get("record_count")
+        size = item.get("size")
+        modified_at = _format_modified_at(item.get("modified_at"))
+        print(
+            f"[data list] {index}. path={path} type={file_type} "
+            f"records={records} size={size} modified_at={modified_at}"
+        )
+
+
+def _data_list_cmd(args: argparse.Namespace) -> int:
+    if args.limit < 1:
+        print("[data list] --limit must be >= 1", file=sys.stderr)
+        return 2
+
+    query: dict[str, Any] = {
+        "platform": args.platform,
+        "file_type": args.file_type,
+    }
+
+    try:
+        url = _build_api_url(args.api_base, "/api/data/files", query)
+        status, body, _headers = _api_fetch(url)
+        payload = _parse_json_bytes(body)
+        if status != 200:
+            message = _extract_api_error_message(payload, f"HTTP {status}")
+            print(f"[data list] List failed (HTTP {status}): {message}", file=sys.stderr)
+            _print_next_steps("[data list]", _build_api_unreachable_hints(api_base=args.api_base), stream=sys.stderr)
+            return 1
+
+        if payload is None:
+            print("[data list] Invalid JSON response from API", file=sys.stderr)
+            return 1
+
+        data = payload.get("data", {}) if isinstance(payload, dict) else {}
+        files = data.get("files", []) if isinstance(data, dict) else []
+        if not isinstance(files, list):
+            files = []
+
+        if not files:
+            if args.json:
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+            else:
+                print("[data list] No data files found for current filters", file=sys.stderr)
+            _print_next_steps(
+                "[data list]",
+                _build_no_data_file_hints(platform=args.platform),
+                stream=sys.stderr,
+            )
+            return 4
+
+        shown = files[: args.limit]
+        if args.json:
+            output_payload = payload.copy()
+            output_data = dict(data)
+            output_data["files"] = shown
+            output_data["total_files"] = len(files)
+            output_data["shown"] = len(shown)
+            output_payload["data"] = output_data
+            print(json.dumps(output_payload, ensure_ascii=False, indent=2))
+        else:
+            _print_data_list_summary(files, limit=args.limit)
+        return 0
+    except ConnectionError as exc:
+        print(f"[data list] API unreachable: {exc}", file=sys.stderr)
+        _print_next_steps("[data list]", _build_api_unreachable_hints(api_base=args.api_base), stream=sys.stderr)
+        return 2
+
+
 def _data_latest_cmd(args: argparse.Namespace) -> int:
     if args.limit < 1:
         print("[data latest] --limit must be >= 1", file=sys.stderr)
@@ -764,8 +1009,18 @@ def _data_latest_cmd(args: argparse.Namespace) -> int:
                 message = _extract_api_error_message(payload, f"HTTP {status}")
                 if status == 404:
                     print(f"[data latest] No latest file found: {message}", file=sys.stderr)
+                    _print_next_steps(
+                        "[data latest]",
+                        _build_no_data_file_hints(platform=args.platform),
+                        stream=sys.stderr,
+                    )
                     return 4
                 print(f"[data latest] Download failed (HTTP {status}): {message}", file=sys.stderr)
+                _print_next_steps(
+                    "[data latest]",
+                    _build_api_unreachable_hints(api_base=args.api_base),
+                    stream=sys.stderr,
+                )
                 return 1
 
             file_type = str(args.file_type or "data").lstrip(".")
@@ -801,12 +1056,27 @@ def _data_latest_cmd(args: argparse.Namespace) -> int:
             message = _extract_api_error_message(payload, f"HTTP {status}")
             if status == 404:
                 print(f"[data latest] No latest file found: {message}", file=sys.stderr)
+                _print_next_steps(
+                    "[data latest]",
+                    _build_no_data_file_hints(platform=args.platform),
+                    stream=sys.stderr,
+                )
                 return 4
             print(f"[data latest] Preview failed (HTTP {status}): {message}", file=sys.stderr)
+            _print_next_steps(
+                "[data latest]",
+                _build_api_unreachable_hints(api_base=args.api_base),
+                stream=sys.stderr,
+            )
             return 1
 
         if payload is None:
             print("[data latest] Invalid JSON response from API", file=sys.stderr)
+            _print_next_steps(
+                "[data latest]",
+                _build_api_unreachable_hints(api_base=args.api_base),
+                stream=sys.stderr,
+            )
             return 1
 
         if args.json:
@@ -816,7 +1086,731 @@ def _data_latest_cmd(args: argparse.Namespace) -> int:
         return 0
     except ConnectionError as exc:
         print(f"[data latest] API unreachable: {exc}", file=sys.stderr)
+        _print_next_steps("[data latest]", _build_api_unreachable_hints(api_base=args.api_base), stream=sys.stderr)
         return 2
+
+
+def _scheduler_call(
+    *,
+    api_base: str,
+    endpoint: str,
+    method: str = "GET",
+    payload: dict[str, Any] | None = None,
+    timeout: float = DEFAULT_API_TIMEOUT,
+) -> tuple[int, dict[str, Any] | None]:
+    url = _build_api_url(api_base, endpoint)
+    status, body, _headers = _api_request(url=url, method=method, payload=payload, timeout=timeout)
+    return status, _parse_json_bytes(body)
+
+
+def _scheduler_get_with_query(
+    *,
+    api_base: str,
+    endpoint: str,
+    query: dict[str, Any] | None = None,
+    timeout: float = DEFAULT_API_TIMEOUT,
+) -> tuple[int, dict[str, Any] | None]:
+    url = _build_api_url(api_base, endpoint, query)
+    status, body, _headers = _api_fetch(url, timeout=timeout)
+    return status, _parse_json_bytes(body)
+
+
+def _scheduler_fetch_files_snapshot(
+    *,
+    api_base: str,
+    platform: str,
+    timeout: float,
+    page_size: int = 300,
+) -> tuple[list[dict[str, Any]], dict[str, float]]:
+    status, payload = _scheduler_get_with_query(
+        api_base=api_base,
+        endpoint="/api/data/files",
+        query={
+            "platform": platform,
+            "page": 1,
+            "page_size": page_size,
+            "sort_by": "modified_at",
+            "sort_order": "desc",
+        },
+        timeout=timeout,
+    )
+    if status != 200 or payload is None:
+        message = _extract_api_error_message(payload, f"HTTP {status}")
+        raise RuntimeError(f"fetch data files failed: {message}")
+
+    data = payload.get("data", {}) if isinstance(payload, dict) else {}
+    files = data.get("files", []) if isinstance(data, dict) else []
+    if not isinstance(files, list):
+        files = []
+
+    snapshot: dict[str, float] = {}
+    for item in files:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path", "")).strip()
+        if not path:
+            continue
+        try:
+            modified_at = float(item.get("modified_at", 0))
+        except Exception:
+            modified_at = 0.0
+        snapshot[path] = modified_at
+
+    return files, snapshot
+
+
+def _scheduler_poll_run_until_terminal(
+    *,
+    api_base: str,
+    run_id: int,
+    timeout: float,
+    poll_interval: float,
+    request_timeout: float,
+) -> tuple[dict[str, Any], list[dict[str, Any]], bool]:
+    started = time.monotonic()
+    terminal_statuses = {"completed", "failed", "cancelled"}
+    history: list[dict[str, Any]] = []
+    last_run: dict[str, Any] = {}
+
+    while True:
+        status, payload = _scheduler_call(
+            api_base=api_base,
+            endpoint=f"/api/scheduler/runs/{run_id}",
+            timeout=request_timeout,
+        )
+        if status != 200 or payload is None:
+            message = _extract_api_error_message(payload, f"HTTP {status}")
+            raise RuntimeError(f"poll run failed(run_id={run_id}): {message}")
+
+        run_data = payload.get("data", {}) if isinstance(payload, dict) else {}
+        if not isinstance(run_data, dict):
+            run_data = {}
+        last_run = run_data
+
+        run_status = str(run_data.get("status", "unknown")).strip().lower()
+        history.append(
+            {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "status": run_status,
+                "message": run_data.get("message"),
+                "task_id": run_data.get("task_id"),
+            }
+        )
+        if run_status in terminal_statuses:
+            return run_data, history, False
+
+        if (time.monotonic() - started) >= timeout:
+            return run_data, history, True
+
+        time.sleep(max(0.2, float(poll_interval)))
+
+
+def _scheduler_fetch_run_logs(
+    *,
+    api_base: str,
+    run_id: int,
+    task_id: str | None,
+    limit: int,
+    timeout: float,
+) -> list[dict[str, Any]]:
+    status, payload = _scheduler_get_with_query(
+        api_base=api_base,
+        endpoint="/api/crawler/logs",
+        query={"limit": max(1, int(limit)), "run_id": run_id},
+        timeout=timeout,
+    )
+    if status != 200 or payload is None:
+        message = _extract_api_error_message(payload, f"HTTP {status}")
+        raise RuntimeError(f"fetch run logs failed(run_id={run_id}): {message}")
+
+    data = payload.get("data", {}) if isinstance(payload, dict) else {}
+    logs = data.get("logs", []) if isinstance(data, dict) else []
+    if not isinstance(logs, list):
+        logs = []
+
+    if logs or not task_id:
+        return [item for item in logs if isinstance(item, dict)]
+
+    # fallback: some environments may have delayed run_id enrichment
+    status, payload = _scheduler_get_with_query(
+        api_base=api_base,
+        endpoint="/api/crawler/logs",
+        query={"limit": max(1, int(limit)), "task_id": task_id},
+        timeout=timeout,
+    )
+    if status != 200 or payload is None:
+        return []
+
+    data = payload.get("data", {}) if isinstance(payload, dict) else {}
+    logs = data.get("logs", []) if isinstance(data, dict) else []
+    if not isinstance(logs, list):
+        logs = []
+    return [item for item in logs if isinstance(item, dict)]
+
+
+def _scheduler_fetch_latest_preview(
+    *,
+    api_base: str,
+    platform: str,
+    preview_limit: int,
+    timeout: float,
+) -> dict[str, Any]:
+    status, payload = _scheduler_get_with_query(
+        api_base=api_base,
+        endpoint="/api/data/latest",
+        query={"platform": platform, "limit": max(1, int(preview_limit))},
+        timeout=timeout,
+    )
+    if status != 200 or payload is None:
+        message = _extract_api_error_message(payload, f"HTTP {status}")
+        raise RuntimeError(f"fetch latest preview failed: {message}")
+
+    data = payload.get("data", {}) if isinstance(payload, dict) else {}
+    if not isinstance(data, dict):
+        data = {}
+    return data
+
+
+def _scheduler_print_or_json(payload: dict[str, Any], *, json_output: bool, text_lines: Sequence[str]) -> None:
+    if json_output:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    for line in text_lines:
+        print(line)
+
+
+def _scheduler_list_cmd(args: argparse.Namespace) -> int:
+    try:
+        status, payload = _scheduler_call(
+            api_base=args.api_base,
+            endpoint="/api/scheduler/jobs",
+            timeout=args.timeout,
+        )
+        if status != 200 or payload is None:
+            message = _extract_api_error_message(payload, f"HTTP {status}")
+            print(f"[scheduler list] Failed: {message}", file=sys.stderr)
+            return 1
+        jobs = payload.get("data", {}).get("jobs", []) if isinstance(payload, dict) else []
+        if not isinstance(jobs, list):
+            jobs = []
+        lines = [f"[scheduler list] total_jobs={len(jobs)}"]
+        for index, job in enumerate(jobs, start=1):
+            lines.append(
+                "[scheduler list] "
+                f"{index}. id={job.get('job_id')} name={job.get('name')} "
+                f"type={job.get('job_type')} platform={job.get('platform')} "
+                f"interval_min={job.get('interval_minutes')} enabled={job.get('enabled')} "
+                f"next_run_at={job.get('next_run_at')}"
+            )
+        _scheduler_print_or_json(payload, json_output=args.json, text_lines=lines)
+        return 0
+    except ConnectionError as exc:
+        print(f"[scheduler list] API unreachable: {exc}", file=sys.stderr)
+        _print_next_steps("[scheduler list]", _build_api_unreachable_hints(api_base=args.api_base), stream=sys.stderr)
+        return 2
+
+
+def _scheduler_status_cmd(args: argparse.Namespace) -> int:
+    try:
+        status, payload = _scheduler_call(
+            api_base=args.api_base,
+            endpoint="/api/scheduler/status",
+            timeout=args.timeout,
+        )
+        if status != 200 or payload is None:
+            message = _extract_api_error_message(payload, f"HTTP {status}")
+            print(f"[scheduler status] Failed: {message}", file=sys.stderr)
+            return 1
+        data = payload.get("data", {}) if isinstance(payload, dict) else {}
+        lines = [
+            f"[scheduler status] enabled={data.get('enabled')} running={data.get('running')}",
+            f"[scheduler status] poll_interval_sec={data.get('poll_interval_sec')}",
+            f"[scheduler status] last_tick_at={data.get('last_tick_at')} last_error={data.get('last_error')}",
+        ]
+        _scheduler_print_or_json(payload, json_output=args.json, text_lines=lines)
+        return 0
+    except ConnectionError as exc:
+        print(f"[scheduler status] API unreachable: {exc}", file=sys.stderr)
+        _print_next_steps("[scheduler status]", _build_api_unreachable_hints(api_base=args.api_base), stream=sys.stderr)
+        return 2
+
+
+def _scheduler_runs_cmd(args: argparse.Namespace) -> int:
+    if args.limit < 1:
+        print("[scheduler runs] --limit must be >= 1", file=sys.stderr)
+        return 2
+    try:
+        url = _build_api_url(
+            args.api_base,
+            "/api/scheduler/runs",
+            {
+                "job_id": args.job_id,
+                "limit": args.limit,
+            },
+        )
+        status, body, _headers = _api_fetch(url, timeout=args.timeout)
+        payload = _parse_json_bytes(body)
+        if status != 200 or payload is None:
+            message = _extract_api_error_message(payload, f"HTTP {status}")
+            print(f"[scheduler runs] Failed: {message}", file=sys.stderr)
+            return 1
+
+        runs = payload.get("data", {}).get("runs", []) if isinstance(payload, dict) else []
+        if not isinstance(runs, list):
+            runs = []
+        lines = [f"[scheduler runs] total_runs={len(runs)}"]
+        for index, run in enumerate(runs, start=1):
+            lines.append(
+                "[scheduler runs] "
+                f"{index}. run_id={run.get('run_id')} job_id={run.get('job_id')} "
+                f"status={run.get('status')} task_id={run.get('task_id')} "
+                f"triggered_at={run.get('triggered_at')} message={run.get('message')}"
+            )
+        _scheduler_print_or_json(payload, json_output=args.json, text_lines=lines)
+        return 0
+    except ConnectionError as exc:
+        print(f"[scheduler runs] API unreachable: {exc}", file=sys.stderr)
+        _print_next_steps("[scheduler runs]", _build_api_unreachable_hints(api_base=args.api_base), stream=sys.stderr)
+        return 2
+
+
+def _scheduler_create_keyword_cmd(args: argparse.Namespace) -> int:
+    payload = {
+        "name": args.name,
+        "job_type": "keyword",
+        "platform": args.platform,
+        "interval_minutes": args.interval_minutes,
+        "enabled": args.enabled,
+        "payload": {
+            "keywords": args.keywords,
+            "save_option": args.save_option,
+            "headless": args.headless,
+            "safety_profile": args.safety_profile,
+        },
+    }
+    if args.max_notes_count is not None:
+        payload["payload"]["max_notes_count"] = args.max_notes_count
+    if args.crawl_sleep_sec is not None:
+        payload["payload"]["crawl_sleep_sec"] = args.crawl_sleep_sec
+
+    try:
+        status, response_payload = _scheduler_call(
+            api_base=args.api_base,
+            endpoint="/api/scheduler/jobs",
+            method="POST",
+            payload=payload,
+            timeout=args.timeout,
+        )
+        if status != 200 or response_payload is None:
+            message = _extract_api_error_message(response_payload, f"HTTP {status}")
+            print(f"[scheduler create-keyword] Failed: {message}", file=sys.stderr)
+            return 1
+        lines = [f"[scheduler create-keyword] created job_id={response_payload.get('data', {}).get('job_id')}"]
+        _scheduler_print_or_json(response_payload, json_output=args.json, text_lines=lines)
+        return 0
+    except ConnectionError as exc:
+        print(f"[scheduler create-keyword] API unreachable: {exc}", file=sys.stderr)
+        _print_next_steps(
+            "[scheduler create-keyword]",
+            _build_api_unreachable_hints(api_base=args.api_base),
+            stream=sys.stderr,
+        )
+        return 2
+
+
+def _scheduler_create_kol_cmd(args: argparse.Namespace) -> int:
+    payload = {
+        "name": args.name,
+        "job_type": "kol",
+        "platform": args.platform,
+        "interval_minutes": args.interval_minutes,
+        "enabled": args.enabled,
+        "payload": {
+            "creator_ids": args.creator_ids,
+            "save_option": args.save_option,
+            "headless": args.headless,
+            "safety_profile": args.safety_profile,
+        },
+    }
+    if args.max_notes_count is not None:
+        payload["payload"]["max_notes_count"] = args.max_notes_count
+    if args.crawl_sleep_sec is not None:
+        payload["payload"]["crawl_sleep_sec"] = args.crawl_sleep_sec
+
+    try:
+        status, response_payload = _scheduler_call(
+            api_base=args.api_base,
+            endpoint="/api/scheduler/jobs",
+            method="POST",
+            payload=payload,
+            timeout=args.timeout,
+        )
+        if status != 200 or response_payload is None:
+            message = _extract_api_error_message(response_payload, f"HTTP {status}")
+            print(f"[scheduler create-kol] Failed: {message}", file=sys.stderr)
+            return 1
+        lines = [f"[scheduler create-kol] created job_id={response_payload.get('data', {}).get('job_id')}"]
+        _scheduler_print_or_json(response_payload, json_output=args.json, text_lines=lines)
+        return 0
+    except ConnectionError as exc:
+        print(f"[scheduler create-kol] API unreachable: {exc}", file=sys.stderr)
+        _print_next_steps(
+            "[scheduler create-kol]",
+            _build_api_unreachable_hints(api_base=args.api_base),
+            stream=sys.stderr,
+        )
+        return 2
+
+
+def _scheduler_enable_disable_cmd(args: argparse.Namespace) -> int:
+    payload = {"enabled": bool(args.enabled)}
+    try:
+        status, response_payload = _scheduler_call(
+            api_base=args.api_base,
+            endpoint=f"/api/scheduler/jobs/{args.job_id}",
+            method="PATCH",
+            payload=payload,
+            timeout=args.timeout,
+        )
+        if status != 200 or response_payload is None:
+            message = _extract_api_error_message(response_payload, f"HTTP {status}")
+            print(f"[scheduler set-enabled] Failed: {message}", file=sys.stderr)
+            return 1
+        lines = [
+            f"[scheduler set-enabled] job_id={args.job_id} enabled={payload['enabled']}",
+        ]
+        _scheduler_print_or_json(response_payload, json_output=args.json, text_lines=lines)
+        return 0
+    except ConnectionError as exc:
+        print(f"[scheduler set-enabled] API unreachable: {exc}", file=sys.stderr)
+        _print_next_steps(
+            "[scheduler set-enabled]",
+            _build_api_unreachable_hints(api_base=args.api_base),
+            stream=sys.stderr,
+        )
+        return 2
+
+
+def _scheduler_delete_cmd(args: argparse.Namespace) -> int:
+    try:
+        status, response_payload = _scheduler_call(
+            api_base=args.api_base,
+            endpoint=f"/api/scheduler/jobs/{args.job_id}",
+            method="DELETE",
+            timeout=args.timeout,
+        )
+        if status != 200 or response_payload is None:
+            message = _extract_api_error_message(response_payload, f"HTTP {status}")
+            print(f"[scheduler delete] Failed: {message}", file=sys.stderr)
+            return 1
+        lines = [f"[scheduler delete] deleted job_id={args.job_id}"]
+        _scheduler_print_or_json(response_payload, json_output=args.json, text_lines=lines)
+        return 0
+    except ConnectionError as exc:
+        print(f"[scheduler delete] API unreachable: {exc}", file=sys.stderr)
+        _print_next_steps("[scheduler delete]", _build_api_unreachable_hints(api_base=args.api_base), stream=sys.stderr)
+        return 2
+
+
+def _scheduler_run_now_cmd(args: argparse.Namespace) -> int:
+    try:
+        status, response_payload = _scheduler_call(
+            api_base=args.api_base,
+            endpoint=f"/api/scheduler/jobs/{args.job_id}/run-now",
+            method="POST",
+            payload={},
+            timeout=args.timeout,
+        )
+        if status != 200 or response_payload is None:
+            message = _extract_api_error_message(response_payload, f"HTTP {status}")
+            print(f"[scheduler run-now] Failed: {message}", file=sys.stderr)
+            return 1
+        data = response_payload.get("data", {}) if isinstance(response_payload, dict) else {}
+        lines = [
+            f"[scheduler run-now] accepted={data.get('accepted')} task_id={data.get('task_id')} "
+            f"run_id={data.get('run_id')} message={data.get('message')}"
+        ]
+        _scheduler_print_or_json(response_payload, json_output=args.json, text_lines=lines)
+        return 0
+    except ConnectionError as exc:
+        print(f"[scheduler run-now] API unreachable: {exc}", file=sys.stderr)
+        _print_next_steps("[scheduler run-now]", _build_api_unreachable_hints(api_base=args.api_base), stream=sys.stderr)
+        return 2
+
+
+def _scheduler_smoke_e2e_cmd(args: argparse.Namespace) -> int:
+    created_job_ids: list[str] = []
+    run_summaries: list[dict[str, Any]] = []
+    cleanup_deleted: list[str] = []
+    cleanup_errors: list[dict[str, Any]] = []
+    smoke_started_at = datetime.now(timezone.utc).isoformat()
+
+    try:
+        status, runtime_payload = _scheduler_call(
+            api_base=args.api_base,
+            endpoint="/api/health/runtime",
+            timeout=args.timeout,
+        )
+        if status != 200 or runtime_payload is None:
+            message = _extract_api_error_message(runtime_payload, f"HTTP {status}")
+            print(f"[scheduler smoke-e2e] Failed runtime check: {message}", file=sys.stderr)
+            return 1
+        runtime_data = runtime_payload.get("data", {}) if isinstance(runtime_payload, dict) else {}
+        if not isinstance(runtime_data, dict):
+            runtime_data = {}
+
+        before_files, before_snapshot = _scheduler_fetch_files_snapshot(
+            api_base=args.api_base,
+            platform=args.platform,
+            timeout=args.timeout,
+        )
+
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        create_requests: list[tuple[str, dict[str, Any]]] = [
+            (
+                "keyword",
+                {
+                    "name": f"scheduler-smoke-keyword-{timestamp}",
+                    "job_type": "keyword",
+                    "platform": args.platform,
+                    "interval_minutes": args.interval_minutes,
+                    "enabled": False,
+                    "payload": {
+                        "keywords": args.keywords,
+                        "login_type": "cookie",
+                        "save_option": args.save_option,
+                        "headless": bool(args.headless),
+                        "start_page": 1,
+                        "enable_comments": True,
+                        "enable_sub_comments": False,
+                        "safety_profile": args.safety_profile,
+                        "max_notes_count": args.max_notes_count,
+                        "crawl_sleep_sec": args.crawl_sleep_sec,
+                    },
+                },
+            ),
+            (
+                "kol",
+                {
+                    "name": f"scheduler-smoke-kol-{timestamp}",
+                    "job_type": "kol",
+                    "platform": args.platform,
+                    "interval_minutes": args.interval_minutes,
+                    "enabled": False,
+                    "payload": {
+                        "creator_ids": args.creator_ids,
+                        "login_type": "cookie",
+                        "save_option": args.save_option,
+                        "headless": bool(args.headless),
+                        "start_page": 1,
+                        "enable_comments": True,
+                        "enable_sub_comments": False,
+                        "safety_profile": args.safety_profile,
+                        "max_notes_count": args.max_notes_count,
+                        "crawl_sleep_sec": args.crawl_sleep_sec,
+                    },
+                },
+            ),
+        ]
+
+        created_jobs: list[dict[str, Any]] = []
+        for label, create_payload in create_requests:
+            status, payload = _scheduler_call(
+                api_base=args.api_base,
+                endpoint="/api/scheduler/jobs",
+                method="POST",
+                payload=create_payload,
+                timeout=args.timeout,
+            )
+            if status != 200 or payload is None:
+                message = _extract_api_error_message(payload, f"HTTP {status}")
+                raise RuntimeError(f"create {label} job failed: {message}")
+            job_data = payload.get("data", {}) if isinstance(payload, dict) else {}
+            if not isinstance(job_data, dict):
+                raise RuntimeError(f"create {label} job failed: invalid response payload")
+            job_id = str(job_data.get("job_id", "")).strip()
+            if not job_id:
+                raise RuntimeError(f"create {label} job failed: empty job_id")
+            created_job_ids.append(job_id)
+            created_jobs.append({"label": label, "job": job_data})
+
+        for item in created_jobs:
+            label = str(item.get("label"))
+            job = item.get("job", {})
+            if not isinstance(job, dict):
+                continue
+            job_id = str(job.get("job_id", "")).strip()
+            if not job_id:
+                continue
+
+            status, trigger_payload = _scheduler_call(
+                api_base=args.api_base,
+                endpoint=f"/api/scheduler/jobs/{job_id}/run-now",
+                method="POST",
+                payload={},
+                timeout=args.timeout,
+            )
+            if status != 200 or trigger_payload is None:
+                message = _extract_api_error_message(trigger_payload, f"HTTP {status}")
+                raise RuntimeError(f"run-now failed(job_id={job_id}): {message}")
+
+            trigger_data = trigger_payload.get("data", {}) if isinstance(trigger_payload, dict) else {}
+            if not isinstance(trigger_data, dict):
+                trigger_data = {}
+            run_id = int(trigger_data.get("run_id", 0) or 0)
+            if run_id <= 0:
+                raise RuntimeError(f"run-now failed(job_id={job_id}): invalid run_id")
+
+            run_data, run_history, timed_out = _scheduler_poll_run_until_terminal(
+                api_base=args.api_base,
+                run_id=run_id,
+                timeout=args.run_timeout,
+                poll_interval=args.poll_interval,
+                request_timeout=args.timeout,
+            )
+            logs = _scheduler_fetch_run_logs(
+                api_base=args.api_base,
+                run_id=run_id,
+                task_id=str(run_data.get("task_id", "")).strip() or None,
+                limit=args.logs_limit,
+                timeout=args.timeout,
+            )
+
+            run_summaries.append(
+                {
+                    "label": label,
+                    "job_id": job_id,
+                    "trigger": trigger_data,
+                    "final": run_data,
+                    "timed_out": timed_out,
+                    "history_count": len(run_history),
+                    "history_tail": run_history[-6:],
+                    "logs_count": len(logs),
+                    "logs_tail": logs[-8:],
+                }
+            )
+
+        # Allow filesystem flush before re-checking latest files.
+        time.sleep(max(0.0, float(args.settle_sec)))
+        after_files, after_snapshot = _scheduler_fetch_files_snapshot(
+            api_base=args.api_base,
+            platform=args.platform,
+            timeout=args.timeout,
+        )
+        latest_preview = _scheduler_fetch_latest_preview(
+            api_base=args.api_base,
+            platform=args.platform,
+            preview_limit=args.preview_limit,
+            timeout=args.timeout,
+        )
+
+        changed_files: list[dict[str, Any]] = []
+        for path, modified_at in after_snapshot.items():
+            previous = before_snapshot.get(path)
+            if previous is None or modified_at > previous:
+                changed_files.append(
+                    {
+                        "path": path,
+                        "modified_at": modified_at,
+                        "new": previous is None,
+                    }
+                )
+        changed_files.sort(key=lambda item: float(item.get("modified_at", 0.0)), reverse=True)
+
+        summary_payload = {
+            "started_at_utc": smoke_started_at,
+            "finished_at_utc": datetime.now(timezone.utc).isoformat(),
+            "runtime_health": runtime_data,
+            "jobs": [item.get("job", {}) for item in created_jobs],
+            "runs": run_summaries,
+            "data_changes": {
+                "before_top3": before_files[:3],
+                "after_top5": after_files[:5],
+                "new_or_updated_files": changed_files[:20],
+            },
+            "latest_preview": {
+                "file": latest_preview.get("file"),
+                "total": latest_preview.get("total"),
+                "sample_size": len(latest_preview.get("data", []) if isinstance(latest_preview.get("data"), list) else []),
+            },
+            "cleanup": {
+                "deleted_jobs": cleanup_deleted,
+                "errors": cleanup_errors,
+                "kept_jobs": bool(args.keep_jobs),
+            },
+        }
+
+        if args.json:
+            print(json.dumps(summary_payload, ensure_ascii=False, indent=2))
+        else:
+            print(
+                "[scheduler smoke-e2e] runtime "
+                f"overall={runtime_data.get('overall_status')} healthy={runtime_data.get('overall_healthy')}"
+            )
+            print(
+                "[scheduler smoke-e2e] created_jobs="
+                + ", ".join(str(item.get("job", {}).get("job_id", "")) for item in created_jobs)
+            )
+            for run in run_summaries:
+                final = run.get("final", {}) if isinstance(run, dict) else {}
+                print(
+                    "[scheduler smoke-e2e] "
+                    f"{run.get('label')} run_id={final.get('run_id')} status={final.get('status')} "
+                    f"task_id={final.get('task_id')} logs={run.get('logs_count')} timeout={run.get('timed_out')}"
+                )
+            print(
+                "[scheduler smoke-e2e] data changed files="
+                f"{len(changed_files)} latest={latest_preview.get('file', {}).get('path') if isinstance(latest_preview.get('file'), dict) else None}"
+            )
+
+        run_all_completed = all(
+            str((run.get("final", {}) if isinstance(run, dict) else {}).get("status", "")).lower() == "completed"
+            and not bool(run.get("timed_out"))
+            for run in run_summaries
+        )
+
+        if not run_all_completed:
+            print("[scheduler smoke-e2e] One or more runs did not complete successfully", file=sys.stderr)
+            return 1
+
+        if args.require_data_change and not changed_files:
+            print("[scheduler smoke-e2e] No data file changes detected after runs", file=sys.stderr)
+            return 1
+
+        return 0
+    except ConnectionError as exc:
+        print(f"[scheduler smoke-e2e] API unreachable: {exc}", file=sys.stderr)
+        _print_next_steps(
+            "[scheduler smoke-e2e]",
+            _build_api_unreachable_hints(api_base=args.api_base),
+            stream=sys.stderr,
+        )
+        return 2
+    except Exception as exc:
+        print(f"[scheduler smoke-e2e] Failed: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        if not args.keep_jobs:
+            for job_id in created_job_ids:
+                try:
+                    status, payload = _scheduler_call(
+                        api_base=args.api_base,
+                        endpoint=f"/api/scheduler/jobs/{job_id}",
+                        method="DELETE",
+                        timeout=args.timeout,
+                    )
+                    if status == 200 and payload is not None and bool(payload.get("success", True)):
+                        cleanup_deleted.append(job_id)
+                    else:
+                        cleanup_errors.append(
+                            {
+                                "job_id": job_id,
+                                "status": status,
+                                "message": _extract_api_error_message(payload, f"HTTP {status}"),
+                            }
+                        )
+                except Exception as cleanup_exc:  # pragma: no cover - defensive cleanup
+                    cleanup_errors.append({"job_id": job_id, "error": str(cleanup_exc)})
 
 
 def _run_doctor_checks(
@@ -1199,7 +2193,9 @@ def _build_parser() -> argparse.ArgumentParser:
         epilog=(
             "Examples:\n"
             "  uv run energycrawler setup\n"
+            "  uv run energycrawler status\n"
             "  uv run energycrawler run --platform xhs --keywords 新能源\n"
+            "  uv run energycrawler data list --platform xhs --limit 20\n"
             "  uv run energycrawler data latest --download\n"
             "  uv run energycrawler config show --simple\n"
             "  uv run energycrawler config env --mode core\n"
@@ -1272,8 +2268,33 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     energy_parser.set_defaults(handler=_energy_cmd)
 
+    status_parser = subparsers.add_parser("status", help="Show runtime status snapshot via API")
+    status_parser.add_argument(
+        "--api-base",
+        default=DEFAULT_API_BASE,
+        help="API base URL (default: ENERGYCRAWLER_API_BASE or http://127.0.0.1:8080)",
+    )
+    status_parser.add_argument("--timeout", type=float, default=DEFAULT_API_TIMEOUT)
+    status_parser.add_argument("--json", action="store_true")
+    status_parser.set_defaults(handler=_status_cmd)
+
     data_parser = subparsers.add_parser("data", help="Data API helper commands")
     data_subparsers = data_parser.add_subparsers(dest="data_command", required=True)
+    data_list_parser = data_subparsers.add_parser(
+        "list",
+        help="List exported data files via API",
+    )
+    data_list_parser.add_argument(
+        "--api-base",
+        default=DEFAULT_API_BASE,
+        help="API base URL (default: ENERGYCRAWLER_API_BASE or http://127.0.0.1:8080)",
+    )
+    data_list_parser.add_argument("--platform", help="Optional platform filter, e.g. xhs/x/twitter")
+    data_list_parser.add_argument("--file-type", help="Optional file type filter, e.g. json/csv/xlsx")
+    data_list_parser.add_argument("--limit", type=int, default=20, help="Max files to display (default: 20)")
+    data_list_parser.add_argument("--json", action="store_true", help="Print JSON output")
+    data_list_parser.set_defaults(handler=_data_list_cmd)
+
     data_latest_parser = data_subparsers.add_parser(
         "latest",
         help="Preview or download latest exported file via API",
@@ -1293,6 +2314,208 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     data_latest_parser.add_argument("--json", action="store_true", help="Print JSON output")
     data_latest_parser.set_defaults(handler=_data_latest_cmd)
+
+    scheduler_parser = subparsers.add_parser("scheduler", help="Scheduler management commands")
+    scheduler_subparsers = scheduler_parser.add_subparsers(dest="scheduler_command", required=True)
+
+    scheduler_list_parser = scheduler_subparsers.add_parser("list", help="List scheduler jobs")
+    scheduler_list_parser.add_argument(
+        "--api-base",
+        default=DEFAULT_API_BASE,
+        help="API base URL (default: ENERGYCRAWLER_API_BASE or http://127.0.0.1:8080)",
+    )
+    scheduler_list_parser.add_argument("--timeout", type=float, default=DEFAULT_API_TIMEOUT)
+    scheduler_list_parser.add_argument("--json", action="store_true")
+    scheduler_list_parser.set_defaults(handler=_scheduler_list_cmd)
+
+    scheduler_status_parser = scheduler_subparsers.add_parser("status", help="Show scheduler runtime status")
+    scheduler_status_parser.add_argument(
+        "--api-base",
+        default=DEFAULT_API_BASE,
+        help="API base URL (default: ENERGYCRAWLER_API_BASE or http://127.0.0.1:8080)",
+    )
+    scheduler_status_parser.add_argument("--timeout", type=float, default=DEFAULT_API_TIMEOUT)
+    scheduler_status_parser.add_argument("--json", action="store_true")
+    scheduler_status_parser.set_defaults(handler=_scheduler_status_cmd)
+
+    scheduler_runs_parser = scheduler_subparsers.add_parser("runs", help="List scheduler run history")
+    scheduler_runs_parser.add_argument(
+        "--api-base",
+        default=DEFAULT_API_BASE,
+        help="API base URL (default: ENERGYCRAWLER_API_BASE or http://127.0.0.1:8080)",
+    )
+    scheduler_runs_parser.add_argument("--job-id", help="Filter by scheduler job id")
+    scheduler_runs_parser.add_argument("--limit", type=int, default=50)
+    scheduler_runs_parser.add_argument("--timeout", type=float, default=DEFAULT_API_TIMEOUT)
+    scheduler_runs_parser.add_argument("--json", action="store_true")
+    scheduler_runs_parser.set_defaults(handler=_scheduler_runs_cmd)
+
+    scheduler_keyword_parser = scheduler_subparsers.add_parser(
+        "create-keyword",
+        help="Create keyword scheduler job",
+    )
+    scheduler_keyword_parser.add_argument("--name", required=True)
+    scheduler_keyword_parser.add_argument("--platform", choices=["xhs", "x"], default="xhs")
+    scheduler_keyword_parser.add_argument("--interval-minutes", type=int, required=True)
+    scheduler_keyword_parser.add_argument("--keywords", required=True)
+    scheduler_keyword_parser.add_argument(
+        "--safety-profile",
+        choices=sorted(SIMPLE_SAFETY_DEFAULTS.keys()),
+        default="balanced",
+    )
+    scheduler_keyword_parser.add_argument(
+        "--save-option",
+        choices=["json", "csv", "excel", "sqlite", "db", "mongodb", "postgres"],
+        default="json",
+    )
+    scheduler_keyword_parser.add_argument("--max-notes-count", type=int)
+    scheduler_keyword_parser.add_argument("--crawl-sleep-sec", type=float)
+    scheduler_keyword_parser.add_argument(
+        "--headless",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    scheduler_keyword_parser.add_argument(
+        "--enabled",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    scheduler_keyword_parser.add_argument(
+        "--api-base",
+        default=DEFAULT_API_BASE,
+        help="API base URL (default: ENERGYCRAWLER_API_BASE or http://127.0.0.1:8080)",
+    )
+    scheduler_keyword_parser.add_argument("--timeout", type=float, default=DEFAULT_API_TIMEOUT)
+    scheduler_keyword_parser.add_argument("--json", action="store_true")
+    scheduler_keyword_parser.set_defaults(handler=_scheduler_create_keyword_cmd)
+
+    scheduler_kol_parser = scheduler_subparsers.add_parser("create-kol", help="Create KOL scheduler job")
+    scheduler_kol_parser.add_argument("--name", required=True)
+    scheduler_kol_parser.add_argument("--platform", choices=["xhs", "x"], default="xhs")
+    scheduler_kol_parser.add_argument("--interval-minutes", type=int, required=True)
+    scheduler_kol_parser.add_argument("--creator-ids", required=True)
+    scheduler_kol_parser.add_argument(
+        "--safety-profile",
+        choices=sorted(SIMPLE_SAFETY_DEFAULTS.keys()),
+        default="balanced",
+    )
+    scheduler_kol_parser.add_argument(
+        "--save-option",
+        choices=["json", "csv", "excel", "sqlite", "db", "mongodb", "postgres"],
+        default="json",
+    )
+    scheduler_kol_parser.add_argument("--max-notes-count", type=int)
+    scheduler_kol_parser.add_argument("--crawl-sleep-sec", type=float)
+    scheduler_kol_parser.add_argument(
+        "--headless",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    scheduler_kol_parser.add_argument(
+        "--enabled",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    scheduler_kol_parser.add_argument(
+        "--api-base",
+        default=DEFAULT_API_BASE,
+        help="API base URL (default: ENERGYCRAWLER_API_BASE or http://127.0.0.1:8080)",
+    )
+    scheduler_kol_parser.add_argument("--timeout", type=float, default=DEFAULT_API_TIMEOUT)
+    scheduler_kol_parser.add_argument("--json", action="store_true")
+    scheduler_kol_parser.set_defaults(handler=_scheduler_create_kol_cmd)
+
+    scheduler_enable_parser = scheduler_subparsers.add_parser("enable", help="Enable scheduler job")
+    scheduler_enable_parser.add_argument("job_id")
+    scheduler_enable_parser.add_argument(
+        "--api-base",
+        default=DEFAULT_API_BASE,
+        help="API base URL (default: ENERGYCRAWLER_API_BASE or http://127.0.0.1:8080)",
+    )
+    scheduler_enable_parser.add_argument("--timeout", type=float, default=DEFAULT_API_TIMEOUT)
+    scheduler_enable_parser.add_argument("--json", action="store_true")
+    scheduler_enable_parser.set_defaults(handler=_scheduler_enable_disable_cmd, enabled=True)
+
+    scheduler_disable_parser = scheduler_subparsers.add_parser("disable", help="Disable scheduler job")
+    scheduler_disable_parser.add_argument("job_id")
+    scheduler_disable_parser.add_argument(
+        "--api-base",
+        default=DEFAULT_API_BASE,
+        help="API base URL (default: ENERGYCRAWLER_API_BASE or http://127.0.0.1:8080)",
+    )
+    scheduler_disable_parser.add_argument("--timeout", type=float, default=DEFAULT_API_TIMEOUT)
+    scheduler_disable_parser.add_argument("--json", action="store_true")
+    scheduler_disable_parser.set_defaults(handler=_scheduler_enable_disable_cmd, enabled=False)
+
+    scheduler_delete_parser = scheduler_subparsers.add_parser("delete", help="Delete scheduler job")
+    scheduler_delete_parser.add_argument("job_id")
+    scheduler_delete_parser.add_argument(
+        "--api-base",
+        default=DEFAULT_API_BASE,
+        help="API base URL (default: ENERGYCRAWLER_API_BASE or http://127.0.0.1:8080)",
+    )
+    scheduler_delete_parser.add_argument("--timeout", type=float, default=DEFAULT_API_TIMEOUT)
+    scheduler_delete_parser.add_argument("--json", action="store_true")
+    scheduler_delete_parser.set_defaults(handler=_scheduler_delete_cmd)
+
+    scheduler_run_now_parser = scheduler_subparsers.add_parser("run-now", help="Trigger scheduler job immediately")
+    scheduler_run_now_parser.add_argument("job_id")
+    scheduler_run_now_parser.add_argument(
+        "--api-base",
+        default=DEFAULT_API_BASE,
+        help="API base URL (default: ENERGYCRAWLER_API_BASE or http://127.0.0.1:8080)",
+    )
+    scheduler_run_now_parser.add_argument("--timeout", type=float, default=DEFAULT_API_TIMEOUT)
+    scheduler_run_now_parser.add_argument("--json", action="store_true")
+    scheduler_run_now_parser.set_defaults(handler=_scheduler_run_now_cmd)
+
+    scheduler_smoke_parser = scheduler_subparsers.add_parser(
+        "smoke-e2e",
+        help="Run keyword+KOL scheduler smoke test and verify data output",
+    )
+    scheduler_smoke_parser.add_argument(
+        "--api-base",
+        default=DEFAULT_API_BASE,
+        help="API base URL (default: ENERGYCRAWLER_API_BASE or http://127.0.0.1:8080)",
+    )
+    scheduler_smoke_parser.add_argument("--platform", choices=["xhs", "x"], default="xhs")
+    scheduler_smoke_parser.add_argument("--keywords", default="新能源,储能")
+    scheduler_smoke_parser.add_argument(
+        "--creator-ids",
+        default="60d5b32a000000002002cf79,6522c385000000002a034681",
+    )
+    scheduler_smoke_parser.add_argument("--interval-minutes", type=int, default=60)
+    scheduler_smoke_parser.add_argument(
+        "--safety-profile",
+        choices=sorted(SIMPLE_SAFETY_DEFAULTS.keys()),
+        default="safe",
+    )
+    scheduler_smoke_parser.add_argument(
+        "--save-option",
+        choices=["json", "csv", "excel", "sqlite", "db", "mongodb", "postgres"],
+        default="json",
+    )
+    scheduler_smoke_parser.add_argument("--max-notes-count", type=int, default=5)
+    scheduler_smoke_parser.add_argument("--crawl-sleep-sec", type=float, default=1.2)
+    scheduler_smoke_parser.add_argument(
+        "--headless",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    scheduler_smoke_parser.add_argument("--poll-interval", type=float, default=5.0)
+    scheduler_smoke_parser.add_argument("--run-timeout", type=float, default=420.0)
+    scheduler_smoke_parser.add_argument("--settle-sec", type=float, default=5.0)
+    scheduler_smoke_parser.add_argument("--logs-limit", type=int, default=200)
+    scheduler_smoke_parser.add_argument("--preview-limit", type=int, default=5)
+    scheduler_smoke_parser.add_argument(
+        "--require-data-change",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    scheduler_smoke_parser.add_argument("--keep-jobs", action="store_true")
+    scheduler_smoke_parser.add_argument("--timeout", type=float, default=DEFAULT_API_TIMEOUT)
+    scheduler_smoke_parser.add_argument("--json", action="store_true")
+    scheduler_smoke_parser.set_defaults(handler=_scheduler_smoke_e2e_cmd)
 
     doctor_parser = subparsers.add_parser("doctor", help="Run quick environment diagnostics")
     _add_doctor_arguments(doctor_parser)

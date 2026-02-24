@@ -17,6 +17,7 @@
 # 使用本代码即表示您同意遵守上述原则和LICENSE中的所有条款。
 
 from .crawler_manager import CrawlerManager, crawler_manager
+from .scheduler_service import SchedulerService, scheduler_service
 
 _QR_SYMBOLS = {
     "XhsQrAuthService",
@@ -28,6 +29,8 @@ _QR_SYMBOLS = {
 __all__ = [
     "CrawlerManager",
     "crawler_manager",
+    "SchedulerService",
+    "scheduler_service",
     "XhsQrAuthService",
     "XhsQrAuthError",
     "XhsQrSessionNotFoundError",

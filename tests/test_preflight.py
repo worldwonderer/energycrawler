@@ -104,6 +104,7 @@ def test_ensure_energy_service_or_raise_validates_twitter_auth(monkeypatch):
         preflight.ensure_energy_service_or_raise("x")
     assert "Missing Twitter auth material" in str(exc.value)
     assert "Actionable next steps:" in str(exc.value)
+    assert "uv run energycrawler status --json" in str(exc.value)
 
 
 def test_ensure_energy_service_or_raise_uses_twitter_cookie_for_x(monkeypatch):
@@ -121,3 +122,24 @@ def test_ensure_energy_service_or_raise_uses_twitter_cookie_for_x(monkeypatch):
     preflight.ensure_energy_service_or_raise("x")
     assert captured["platform"] == "x"
     assert captured["cookie"] == "auth_token=abc; ct0=def"
+
+
+def test_build_preflight_failure_hint_for_unreachable_energy_includes_status_check():
+    hint = preflight.build_preflight_failure_hint(
+        "xhs",
+        "Energy service unreachable at localhost:50051: connection refused",
+    )
+
+    assert "Start/recover service: uv run energycrawler energy ensure" in hint
+    assert "Re-check runtime snapshot: uv run energycrawler status --json" in hint
+
+
+def test_build_preflight_failure_hint_for_xhs_canary_includes_open_login_flow():
+    hint = preflight.build_preflight_failure_hint(
+        "xhs",
+        "xhs signature canary failed: mnsv2 missing",
+    )
+
+    assert "Run canary details: uv run python scripts/check_xhs_signature_runtime.py --json" in hint
+    assert "Re-login with open+sync+verify: uv run energycrawler auth xhs-open-login --api-base http://localhost:8080" in hint
+    assert "Re-check runtime snapshot: uv run energycrawler status --json" in hint

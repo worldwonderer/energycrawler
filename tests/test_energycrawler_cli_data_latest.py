@@ -123,7 +123,10 @@ def test_data_latest_returns_nonzero_for_404(monkeypatch, capsys):
     code = cli._data_latest_cmd(_latest_args(platform="xhs"))
 
     assert code == 4
-    assert "No latest file found" in capsys.readouterr().err
+    stderr = capsys.readouterr().err
+    assert "No latest file found" in stderr
+    assert "Actionable next steps:" in stderr
+    assert "uv run energycrawler run --platform xhs --keywords" in stderr
 
 
 def test_data_latest_returns_nonzero_when_api_unreachable(monkeypatch, capsys):
@@ -135,4 +138,7 @@ def test_data_latest_returns_nonzero_when_api_unreachable(monkeypatch, capsys):
     code = cli._data_latest_cmd(_latest_args())
 
     assert code == 2
-    assert "API unreachable" in capsys.readouterr().err
+    stderr = capsys.readouterr().err
+    assert "API unreachable" in stderr
+    assert "Actionable next steps:" in stderr
+    assert "uv run uvicorn api.main:app --port 8080 --reload" in stderr

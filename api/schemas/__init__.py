@@ -36,6 +36,16 @@ from .auth import (
     XhsEnergySyncRequest,
     XhsEnergySyncResponse,
 )
+from .scheduler import (
+    SchedulerJobTypeEnum,
+    SchedulerKeywordPayload,
+    SchedulerKolPayload,
+    SchedulerJobCreateRequest,
+    SchedulerJobPatchRequest,
+    SchedulerJobCloneRequest,
+    SchedulerJobsBatchEnableRequest,
+    SchedulerRunNowResponse,
+)
 
 __all__ = [
     "PlatformEnum",
@@ -54,4 +64,12 @@ __all__ = [
     "XhsQrCancelResponse",
     "XhsEnergySyncRequest",
     "XhsEnergySyncResponse",
+    "SchedulerJobTypeEnum",
+    "SchedulerKeywordPayload",
+    "SchedulerKolPayload",
+    "SchedulerJobCreateRequest",
+    "SchedulerJobPatchRequest",
+    "SchedulerJobCloneRequest",
+    "SchedulerJobsBatchEnableRequest",
+    "SchedulerRunNowResponse",
 ]

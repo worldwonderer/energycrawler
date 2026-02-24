@@ -140,9 +140,38 @@ def _xhs_open_login_cmd(args: argparse.Namespace) -> int:
         cmd_args.extend(["--browser-id", args.browser_id])
     if args.headless:
         cmd_args.append("--headless")
+    if not args.verify:
+        cmd_args.append("--no-verify")
     if args.json:
         cmd_args.append("--json")
     return _run_python_script("xhs_open_login_and_sync.py", cmd_args)
+
+
+def _xhs_login_cmd(args: argparse.Namespace) -> int:
+    """Alias for xhs-open-login, used by one-click login wizard UX."""
+    return _xhs_open_login_cmd(args)
+
+
+def _add_xhs_login_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--api-base", default="http://localhost:8080")
+    parser.add_argument("--energy-host", default="localhost")
+    parser.add_argument("--energy-port", type=int, default=50051)
+    parser.add_argument(
+        "--browser-id",
+        default="",
+        help="Target browser id (empty = auto-generate isolated id)",
+    )
+    parser.add_argument("--login-url", default="https://www.xiaohongshu.com")
+    parser.add_argument("--headless", action="store_true")
+    parser.add_argument("--poll-interval", type=float, default=2.0)
+    parser.add_argument("--timeout-sec", type=float, default=300.0)
+    parser.add_argument(
+        "--verify",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Verify synced login state after sync (default: true)",
+    )
+    parser.add_argument("--json", action="store_true")
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -207,22 +236,17 @@ def _build_parser() -> argparse.ArgumentParser:
 
     open_login_parser = subparsers.add_parser(
         "xhs-open-login",
-        help="Open XHS login page in Energy and auto-sync cookies after login",
+        help="Open XHS login page in Energy and auto-sync cookies after login (legacy alias)",
     )
-    open_login_parser.add_argument("--api-base", default="http://localhost:8080")
-    open_login_parser.add_argument("--energy-host", default="localhost")
-    open_login_parser.add_argument("--energy-port", type=int, default=50051)
-    open_login_parser.add_argument(
-        "--browser-id",
-        default="",
-        help="Target browser id (empty = auto-generate isolated id)",
-    )
-    open_login_parser.add_argument("--login-url", default="https://www.xiaohongshu.com")
-    open_login_parser.add_argument("--headless", action="store_true")
-    open_login_parser.add_argument("--poll-interval", type=float, default=2.0)
-    open_login_parser.add_argument("--timeout-sec", type=float, default=300.0)
-    open_login_parser.add_argument("--json", action="store_true")
+    _add_xhs_login_arguments(open_login_parser)
     open_login_parser.set_defaults(handler=_xhs_open_login_cmd)
+
+    login_parser = subparsers.add_parser(
+        "xhs-login",
+        help="One-click XHS login wizard (open + sync + verify)",
+    )
+    _add_xhs_login_arguments(login_parser)
+    login_parser.set_defaults(handler=_xhs_login_cmd)
 
     return parser
 

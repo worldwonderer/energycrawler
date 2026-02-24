@@ -125,6 +125,7 @@ def build_preflight_failure_hint(platform: str, message: str) -> str:
             [
                 "1) Start/recover service: uv run energycrawler energy ensure",
                 "2) Verify health: uv run energycrawler energy check --json",
+                "3) Re-check runtime snapshot: uv run energycrawler status --json",
             ]
         )
     elif normalized in {"x", "twitter"} and "missing twitter auth material" in message.lower():
@@ -133,6 +134,7 @@ def build_preflight_failure_hint(platform: str, message: str) -> str:
                 "1) Export from logged-in browser: uv run energycrawler auth export --platform x",
                 "2) Or set env vars: TWITTER_AUTH_TOKEN / TWITTER_CT0 (or TWITTER_COOKIE)",
                 "3) Validate login state: uv run energycrawler auth status --json",
+                "4) Re-check runtime snapshot: uv run energycrawler status --json",
             ]
         )
     elif normalized in {"xhs", "xiaohongshu"} and "canary" in message.lower():
@@ -140,10 +142,17 @@ def build_preflight_failure_hint(platform: str, message: str) -> str:
             [
                 "1) Probe signature runtime: uv run energycrawler energy check --json",
                 "2) Run canary details: uv run python scripts/check_xhs_signature_runtime.py --json",
+                "3) Re-login with open+sync+verify: uv run energycrawler auth xhs-open-login --api-base http://localhost:8080",
+                "4) Re-check runtime snapshot: uv run energycrawler status --json",
             ]
         )
     else:
-        hint_lines.append("1) Re-run with doctor: uv run energycrawler doctor")
+        hint_lines.extend(
+            [
+                "1) Re-run with doctor: uv run energycrawler doctor",
+                "2) Check runtime snapshot: uv run energycrawler status --json",
+            ]
+        )
 
     return "\n".join(hint_lines)
 
