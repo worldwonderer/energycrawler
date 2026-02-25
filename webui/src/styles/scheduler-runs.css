@@ -556,6 +556,27 @@
   white-space: nowrap;
 }
 
+.sr-name-cell {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.sr-name-main {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sr-name-sub {
+  font-size: 0.74rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .sr-cell-num {
   text-align: right;
   font-variant-numeric: tabular-nums;

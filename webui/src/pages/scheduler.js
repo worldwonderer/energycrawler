@@ -16,6 +16,7 @@ const FALLBACK_OPTIONS = {
 };
 
 const TEMPLATE_STORAGE_KEY = "energycrawler.ui.scheduler.templates.v1";
+const CREATOR_ALIAS_STORAGE_KEY = "energycrawler.ui.scheduler.creator_aliases.v1";
 const TEMPLATE_JOB_TYPES = ["keyword", "kol"];
 const TEMPLATE_MAX_PER_JOB_TYPE = 20;
 const TEMPLATE_SENSITIVE_KEY_PATTERNS = [
@@ -105,13 +106,13 @@ function buildPayloadFromForm(formData, jobType) {
   }
 
   if (normalizedJobType === "kol") {
-    const creatorIds = String(formData.get("creator_ids") || "").trim();
-    if (!creatorIds) {
+    const creatorParse = parseCreatorIdentities(formData.get("creator_ids"));
+    if (creatorParse.creatorIds.length === 0) {
       throw new Error("KOL 任务必须填写 creator_ids");
     }
     return {
       ...basePayload,
-      creator_ids: creatorIds,
+      creator_ids: creatorParse.creatorIds.join(","),
     };
   }
 
@@ -261,6 +262,107 @@ function parseCommaSeparatedItems(text) {
     .filter(Boolean);
 }
 
+function splitCreatorRawItems(text) {
+  return String(text || "")
+    .split(/[\n,，]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function parseCreatorIdentityToken(token) {
+  const raw = String(token || "").trim();
+  if (!raw) return null;
+
+  let creatorId = raw;
+  let alias = "";
+
+  const bracketMatch = raw.match(/^(.+?)[(（]([^()（）]+)[)）]$/);
+  if (bracketMatch) {
+    alias = String(bracketMatch[1] || "").trim();
+    creatorId = String(bracketMatch[2] || "").trim();
+  } else if (raw.includes("|")) {
+    const [left, ...rest] = raw.split("|");
+    const right = rest.join("|").trim();
+    if (right) {
+      alias = String(left || "").trim();
+      creatorId = right;
+    }
+  } else if (!raw.includes("://") && /^[^:：]+[:：].+$/.test(raw)) {
+    const delimiter = raw.includes("：") ? "：" : ":";
+    const parts = raw.split(delimiter);
+    const left = String(parts.shift() || "").trim();
+    const right = String(parts.join(delimiter) || "").trim();
+    if (left && right) {
+      alias = left;
+      creatorId = right;
+    }
+  }
+
+  creatorId = creatorId.trim();
+  if (!creatorId) return null;
+
+  return {
+    raw,
+    alias: alias.trim(),
+    creatorId,
+  };
+}
+
+function uniqueCreatorIds(items) {
+  const seen = new Set();
+  const output = [];
+  items.forEach((item) => {
+    const value = String(item || "").trim();
+    if (!value || seen.has(value)) return;
+    seen.add(value);
+    output.push(value);
+  });
+  return output;
+}
+
+function parseCreatorIdentities(text) {
+  const items = splitCreatorRawItems(text)
+    .map((item) => parseCreatorIdentityToken(item))
+    .filter(Boolean);
+
+  const creatorIds = uniqueCreatorIds(items.map((item) => item.creatorId));
+  return {
+    items,
+    creatorIds,
+  };
+}
+
+function readCreatorAliasMapFromStorage() {
+  if (typeof window === "undefined" || !window.localStorage) return {};
+  try {
+    const raw = window.localStorage.getItem(CREATOR_ALIAS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+
+    const next = {};
+    Object.entries(parsed).forEach(([creatorId, alias]) => {
+      const key = String(creatorId || "").trim();
+      const value = String(alias || "").trim();
+      if (!key || !value) return;
+      next[key] = value.slice(0, 40);
+    });
+    return next;
+  } catch {
+    return {};
+  }
+}
+
+function writeCreatorAliasMapToStorage(creatorAliasMap) {
+  if (typeof window === "undefined" || !window.localStorage) return false;
+  try {
+    window.localStorage.setItem(CREATOR_ALIAS_STORAGE_KEY, JSON.stringify(creatorAliasMap || {}));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function runSubmitPrecheck(formData, jobType) {
   const name = String(formData.get("name") || "").trim();
   if (!name) return "任务名称不能为空";
@@ -277,11 +379,11 @@ function runSubmitPrecheck(formData, jobType) {
 
   const normalizedJobType = normalizeTemplateJobType(jobType);
   const keywords = parseCommaSeparatedItems(formData.get("keywords"));
-  const creatorIds = parseCommaSeparatedItems(formData.get("creator_ids"));
+  const creatorParse = parseCreatorIdentities(formData.get("creator_ids"));
   if (normalizedJobType === "keyword" && keywords.length === 0) {
     return "关键词任务至少需要 1 个 keyword";
   }
-  if (normalizedJobType === "kol" && creatorIds.length === 0) {
+  if (normalizedJobType === "kol" && creatorParse.creatorIds.length === 0) {
     return "KOL 任务至少需要 1 个 creator_id";
   }
 
@@ -312,6 +414,7 @@ export default async function renderSchedulerPage(mountEl, ctx = {}) {
     selectedJobIds: new Set(),
     options: FALLBACK_OPTIONS,
     templates: [],
+    creatorAliasMap: readCreatorAliasMapFromStorage(),
     loading: false,
     editingJobId: "",
     currentStep: WIZARD_MIN_STEP,
@@ -526,8 +629,12 @@ export default async function renderSchedulerPage(mountEl, ctx = {}) {
                   <input type="text" name="keywords" placeholder="多个关键词请用逗号分隔" />
                 </label>
                 <label class="sr-control sr-field-creator-ids sr-hidden" data-role="field-creator-ids">
-                  <span>KOL ID（creator_ids）</span>
-                  <input type="text" name="creator_ids" placeholder="多个 ID 请用逗号分隔" />
+                  <span>KOL 账号（名称 + creator_id）</span>
+                  <input
+                    type="text"
+                    name="creator_ids"
+                    placeholder="支持 昵称|ID、昵称(ID) 或纯ID，多个用逗号分隔"
+                  />
                 </label>
               </div>
 
@@ -735,13 +842,37 @@ export default async function renderSchedulerPage(mountEl, ctx = {}) {
     return String(formData?.get("job_type") || refs.jobTypeSelect?.value || "keyword");
   }
 
+  function formatCreatorDisplayLabel(creatorId, alias = "") {
+    const id = String(creatorId || "").trim();
+    const name = String(alias || "").trim();
+    if (!id) return "";
+    if (!name) return id;
+    return `${name}(${id})`;
+  }
+
+  function resolveCreatorAliasForId(creatorId, aliasHint = "") {
+    const id = String(creatorId || "").trim();
+    if (!id) return "";
+    const hint = String(aliasHint || "").trim();
+    if (hint) return hint;
+    return String(state.creatorAliasMap?.[id] || "").trim();
+  }
+
+  function toCreatorDisplayItems(text) {
+    const parsed = parseCreatorIdentities(text);
+    return parsed.creatorIds.map((creatorId) => {
+      const matched = parsed.items.find((item) => item.creatorId === creatorId);
+      const alias = resolveCreatorAliasForId(creatorId, matched?.alias || "");
+      return formatCreatorDisplayLabel(creatorId, alias);
+    });
+  }
+
   function summarizeTarget(jobType, elements) {
     const normalizedType = normalizeTemplateJobType(jobType);
-    const rawValue =
+    const items =
       normalizedType === "kol"
-        ? String(elements.creator_ids?.value || "")
-        : String(elements.keywords?.value || "");
-    const items = parseCommaSeparatedItems(rawValue);
+        ? toCreatorDisplayItems(elements.creator_ids?.value || "")
+        : parseCommaSeparatedItems(elements.keywords?.value || "");
     if (items.length === 0) {
       return normalizedType === "kol" ? "待填写 creator_ids" : "待填写 keywords";
     }
@@ -911,6 +1042,7 @@ export default async function renderSchedulerPage(mountEl, ctx = {}) {
 
       if (!query) return true;
       const payload = job?.payload || {};
+      const creatorDisplay = toCreatorDisplayItems(payload.creator_ids || "").join(" ");
       const haystack = [
         job.job_id,
         job.name,
@@ -918,6 +1050,7 @@ export default async function renderSchedulerPage(mountEl, ctx = {}) {
         job.platform,
         payload.keywords,
         payload.creator_ids,
+        creatorDisplay,
       ]
         .filter(Boolean)
         .join(" ")
@@ -1050,6 +1183,47 @@ export default async function renderSchedulerPage(mountEl, ctx = {}) {
     updateJobTypeVisibility(normalizedType);
     renderTemplateGroups();
     updateCreateSummary();
+  }
+
+  function rememberCreatorAliasesFromText(rawText) {
+    const parsed = parseCreatorIdentities(rawText);
+    let changed = false;
+    parsed.items.forEach((item) => {
+      const creatorId = String(item.creatorId || "").trim();
+      const alias = String(item.alias || "").trim();
+      if (!creatorId || !alias) return;
+      if (state.creatorAliasMap[creatorId] === alias) return;
+      state.creatorAliasMap[creatorId] = alias.slice(0, 40);
+      changed = true;
+    });
+    if (changed) writeCreatorAliasMapToStorage(state.creatorAliasMap);
+  }
+
+  function formatCreatorInputForDisplay(rawCreatorIds) {
+    const ids = parseCommaSeparatedItems(rawCreatorIds);
+    return ids
+      .map((creatorId) => {
+        const alias = resolveCreatorAliasForId(creatorId);
+        return alias ? `${alias}|${creatorId}` : creatorId;
+      })
+      .join(", ");
+  }
+
+  function getJobTargetPreview(job) {
+    const payload = job?.payload || {};
+    if (job?.job_type === "keyword") {
+      const keywords = parseCommaSeparatedItems(payload.keywords || "");
+      if (keywords.length === 0) return "";
+      const preview = keywords.slice(0, 2).join(" / ");
+      return keywords.length > 2 ? `${preview} 等 ${keywords.length} 个关键词` : preview;
+    }
+    if (job?.job_type === "kol") {
+      const creators = toCreatorDisplayItems(payload.creator_ids || "");
+      if (creators.length === 0) return "";
+      const preview = creators.slice(0, 2).join(" / ");
+      return creators.length > 2 ? `${preview} 等 ${creators.length} 个账号` : preview;
+    }
+    return "";
   }
 
   function readCurrentFormSnapshot() {
@@ -1333,7 +1507,15 @@ export default async function renderSchedulerPage(mountEl, ctx = {}) {
         tr.appendChild(selectTd);
 
         tr.appendChild(createDataCell(job.job_id || "-", "sr-cell-id"));
-        tr.appendChild(createDataCell(job.name || "-", "sr-cell-primary"));
+        const nameTd = createElement("td", "sr-cell-primary");
+        const nameWrap = createElement("div", "sr-name-cell");
+        nameWrap.appendChild(createElement("div", "sr-name-main", job.name || "-"));
+        const targetPreview = getJobTargetPreview(job);
+        if (targetPreview) {
+          nameWrap.appendChild(createElement("div", "sr-name-sub", targetPreview));
+        }
+        nameTd.appendChild(nameWrap);
+        tr.appendChild(nameTd);
 
         const typeTd = createElement("td");
         typeTd.appendChild(createPill(job.job_type || "-", "info"));
@@ -1427,7 +1609,7 @@ export default async function renderSchedulerPage(mountEl, ctx = {}) {
     refs.jobForm.elements.enabled.checked = Boolean(job.enabled);
 
     refs.jobForm.elements.keywords.value = payload.keywords || "";
-    refs.jobForm.elements.creator_ids.value = payload.creator_ids || "";
+    refs.jobForm.elements.creator_ids.value = formatCreatorInputForDisplay(payload.creator_ids || "");
     refs.jobForm.elements.save_option.value = payload.save_option || "json";
     refs.jobForm.elements.safety_profile.value = payload.safety_profile || "";
     refs.jobForm.elements.start_page.value = String(payload.start_page || 1);
@@ -1585,6 +1767,9 @@ export default async function renderSchedulerPage(mountEl, ctx = {}) {
 
     const formData = new FormData(refs.jobForm);
     const jobType = resolveSubmitJobType(formData);
+    if (normalizeTemplateJobType(jobType) === "kol") {
+      rememberCreatorAliasesFromText(formData.get("creator_ids"));
+    }
 
     let precheckError = "";
     try {
