@@ -46,6 +46,7 @@ class CrawlerManager:
         max_workers: Optional[int] = None,
         max_queue_size: Optional[int] = None,
         max_spawn_retries: Optional[int] = None,
+        log_buffer_capacity: Optional[int] = None,
         process_factory: Optional[Callable[..., subprocess.Popen]] = None,
         enable_output_reader: bool = True,
     ):
@@ -55,6 +56,7 @@ class CrawlerManager:
         self.max_workers = self._resolve_max_workers(max_workers)
         self.max_queue_size = self._resolve_max_queue_size(max_queue_size)
         self.max_spawn_retries = self._resolve_max_spawn_retries(max_spawn_retries)
+        self.log_buffer_capacity = self._resolve_log_buffer_capacity(log_buffer_capacity)
 
         self._workers: List["_WorkerSlot"] = [
             _WorkerSlot(worker_id=index + 1) for index in range(self.max_workers)
@@ -105,9 +107,9 @@ class CrawlerManager:
             message=message
         )
         self._logs.append(entry)
-        # Keep last 500 logs
-        if len(self._logs) > 500:
-            self._logs = self._logs[-500:]
+        # Keep the most recent N logs
+        if len(self._logs) > self.log_buffer_capacity:
+            self._logs = self._logs[-self.log_buffer_capacity:]
         return entry
 
     async def _push_log(self, entry: LogEntry):
@@ -791,6 +793,17 @@ class CrawlerManager:
         except ValueError:
             candidate = 2.0
         return max(0.1, min(candidate, 60.0))
+
+    def _resolve_log_buffer_capacity(self, log_buffer_capacity: Optional[int]) -> int:
+        if log_buffer_capacity is not None:
+            candidate = log_buffer_capacity
+        else:
+            raw_value = os.getenv("CRAWLER_LOG_BUFFER_CAPACITY", "2000")
+            try:
+                candidate = int(raw_value)
+            except ValueError:
+                candidate = 2000
+        return max(1, min(candidate, 50000))
 
     def _next_task_id(self) -> str:
         self._task_seq += 1

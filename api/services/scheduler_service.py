@@ -70,6 +70,12 @@ class SchedulerService:
         except ValueError:
             parsed_grace = 10.0
         self._run_terminal_grace_sec = max(1.0, min(parsed_grace, 600.0))
+        raw_backfill_limit = os.getenv("SCHEDULER_RUNTIME_STATE_BACKFILL_LIMIT", "500")
+        try:
+            parsed_backfill_limit = int(raw_backfill_limit)
+        except ValueError:
+            parsed_backfill_limit = 500
+        self._runtime_state_backfill_limit = max(0, min(parsed_backfill_limit, 5000))
         self._run_statuses = {
             "accepted",
             "rejected",
@@ -335,16 +341,28 @@ class SchedulerService:
                 run_status = "failed"
                 run_message = message
 
+            run_details = {
+                "trigger_reason": trigger_reason,
+                "result": result,
+            }
+            if run_status in {"completed", "failed", "cancelled"}:
+                run_details.update(
+                    self._build_terminal_fallback_details(
+                        terminal_message=run_message,
+                        exit_code=None,
+                        terminal_source="scheduler",
+                    )
+                )
+                if run_status == "failed":
+                    run_details["failure_reason"] = run_message
+
             run_id = await asyncio.to_thread(
                 self._store.create_run,
                 job_id=job_id,
                 status=run_status,
                 message=run_message,
                 task_id=task_id,
-                details={
-                    "trigger_reason": trigger_reason,
-                    "result": result,
-                },
+                details=run_details,
             )
             next_run_at = (_utc_now() + timedelta(minutes=int(job["interval_minutes"]))).isoformat()
             await asyncio.to_thread(
@@ -369,81 +387,137 @@ class SchedulerService:
     async def _sync_run_lifecycle(self) -> None:
         await self.initialize()
         open_runs = await asyncio.to_thread(self._store.list_open_runs)
-        if not open_runs:
-            return
 
-        try:
-            cluster_snapshot = crawler_manager.get_cluster_status()
-        except Exception:  # pragma: no cover - defensive fallback
-            cluster_snapshot = {}
+        if open_runs:
+            try:
+                cluster_snapshot = crawler_manager.get_cluster_status()
+            except Exception:  # pragma: no cover - defensive fallback
+                cluster_snapshot = {}
 
-        active_task_ids = {
-            str(task_id)
-            for task_id in (cluster_snapshot.get("active_task_ids") or [])
-            if task_id
-        }
-        pending_task_ids = {
-            str(task_id)
-            for task_id in (cluster_snapshot.get("pending_task_ids") or [])
-            if task_id
-        }
+            active_task_ids = {
+                str(task_id)
+                for task_id in (cluster_snapshot.get("active_task_ids") or [])
+                if task_id
+            }
+            pending_task_ids = {
+                str(task_id)
+                for task_id in (cluster_snapshot.get("pending_task_ids") or [])
+                if task_id
+            }
 
-        for run in open_runs:
-            run_id = int(run["run_id"])
-            task_id = str(run.get("task_id") or "").strip()
+            for run in open_runs:
+                run_id = int(run["run_id"])
+                task_id = str(run.get("task_id") or "").strip()
 
-            if not task_id:
-                if self._is_run_past_grace_period(run):
+                if not task_id:
+                    if self._is_run_past_grace_period(run):
+                        await asyncio.to_thread(
+                            self._store.update_run_status,
+                            run_id=run_id,
+                            status="failed",
+                            message="Crawler task missing task_id; marked as failed",
+                            details_patch={
+                                "failure_reason": "missing_task_id",
+                                **self._build_terminal_fallback_details(
+                                    terminal_message="Crawler task missing task_id; marked as failed",
+                                    exit_code=None,
+                                    terminal_source="scheduler_runtime",
+                                ),
+                            },
+                        )
+                    continue
+
+                if task_id in active_task_ids:
+                    if run.get("status") != "running":
+                        await asyncio.to_thread(
+                            self._store.update_run_status,
+                            run_id=run_id,
+                            status="running",
+                            message="Crawler task running",
+                        )
+                    continue
+
+                if task_id in pending_task_ids:
+                    if run.get("status") != "queued":
+                        await asyncio.to_thread(
+                            self._store.update_run_status,
+                            run_id=run_id,
+                            status="queued",
+                            message="Crawler task queued",
+                        )
+                    continue
+
+                terminal = self._find_terminal_log_for_task(task_id)
+                if terminal is not None:
+                    terminal_status, terminal_message, terminal_details = terminal
                     await asyncio.to_thread(
                         self._store.update_run_status,
                         run_id=run_id,
-                        status="failed",
-                        message="Crawler task missing task_id; marked as failed",
-                        details_patch={"failure_reason": "missing_task_id"},
+                        status=terminal_status,
+                        message=terminal_message,
+                        details_patch=terminal_details,
                     )
-                continue
+                    continue
 
-            if task_id in active_task_ids:
-                if run.get("status") != "running":
-                    await asyncio.to_thread(
-                        self._store.update_run_status,
-                        run_id=run_id,
-                        status="running",
-                        message="Crawler task running",
-                    )
-                continue
+                if not self._is_run_past_grace_period(run):
+                    continue
 
-            if task_id in pending_task_ids:
-                if run.get("status") != "queued":
-                    await asyncio.to_thread(
-                        self._store.update_run_status,
-                        run_id=run_id,
-                        status="queued",
-                        message="Crawler task queued",
-                    )
-                continue
-
-            terminal = self._find_terminal_log_for_task(task_id)
-            if terminal is not None:
-                terminal_status, terminal_message, terminal_details = terminal
                 await asyncio.to_thread(
                     self._store.update_run_status,
                     run_id=run_id,
-                    status=terminal_status,
-                    message=terminal_message,
-                    details_patch=terminal_details,
+                    status="failed",
+                    message="Crawler task left runtime queue unexpectedly",
+                    details_patch={
+                        "failure_reason": "runtime_state_missing",
+                        **self._build_terminal_fallback_details(
+                            terminal_message="Crawler task left runtime queue unexpectedly",
+                            exit_code=None,
+                            terminal_source="scheduler_runtime",
+                        ),
+                    },
                 )
+
+        await self._backfill_runtime_state_missing_runs()
+
+    async def _backfill_runtime_state_missing_runs(self) -> None:
+        if self._runtime_state_backfill_limit <= 0:
+            return
+
+        runs = await asyncio.to_thread(
+            self._store.list_runs,
+            job_id=None,
+            status="failed",
+            platform=None,
+            triggered_from=None,
+            triggered_to=None,
+            limit=self._runtime_state_backfill_limit,
+        )
+
+        for run in runs:
+            details = run.get("details") or {}
+            if details.get("failure_reason") != "runtime_state_missing":
                 continue
 
-            if not self._is_run_past_grace_period(run):
+            task_id = str(run.get("task_id") or "").strip()
+            if not task_id:
                 continue
 
+            terminal = self._find_terminal_log_for_task(task_id)
+            if terminal is None:
+                continue
+
+            terminal_status, terminal_message, terminal_details = terminal
+            details_patch: dict[str, Any] = {
+                **terminal_details,
+                "runtime_state_backfilled": True,
+                "failure_reason": terminal_details.get("failure_reason"),
+            }
             await asyncio.to_thread(
                 self._store.update_run_status,
-                run_id=run_id,
-                status="failed",
-                message="Crawler task left runtime queue unexpectedly",
-                details_patch={"failure_reason": "runtime_state_missing"},
+                run_id=int(run["run_id"]),
+                status=terminal_status,
+                message=terminal_message,
+                details_patch=details_patch,
             )
 
     def _resolve_task_runtime_status(self, task_id: Optional[str]) -> str:
@@ -481,10 +555,10 @@ class SchedulerService:
                 return (
                     "completed",
                     "Crawler task completed successfully",
-                    {
-                        "exit_code": 0,
-                        "terminal_source": "crawler_log",
-                    },
+                    self._build_terminal_log_details(
+                        entry,
+                        exit_code=0,
+                    ),
                 )
 
             exit_match = exit_pattern.search(message)
@@ -493,24 +567,73 @@ class SchedulerService:
                 return (
                     "failed",
                     f"Crawler task failed with exit code {exit_code}",
-                    {
-                        "exit_code": exit_code,
-                        "terminal_source": "crawler_log",
-                    },
+                    self._build_terminal_log_details(
+                        entry,
+                        exit_code=exit_code,
+                    ),
                 )
 
             failure_match = spawn_failure_pattern.search(message)
             if failure_match:
+                failure_reason = failure_match.group(1).strip()
                 return (
                     "failed",
                     "Crawler task failed to start",
-                    {
-                        "failure_reason": failure_match.group(1).strip(),
-                        "terminal_source": "crawler_log",
-                    },
+                    self._build_terminal_log_details(
+                        entry,
+                        exit_code=None,
+                        failure_reason=failure_reason,
+                    ),
                 )
 
         return None
+
+    def _build_terminal_log_details(
+        self,
+        entry: Any,
+        *,
+        exit_code: Optional[int],
+        failure_reason: Optional[str] = None,
+    ) -> dict[str, Any]:
+        message = str(getattr(entry, "message", "") or "")
+        details = self._build_terminal_fallback_details(
+            terminal_message=message,
+            exit_code=exit_code,
+            terminal_log_id=self._normalize_terminal_log_id(getattr(entry, "id", None)),
+            terminal_source="crawler_log",
+        )
+        if failure_reason is not None:
+            details["failure_reason"] = failure_reason
+        return details
+
+    def _build_terminal_fallback_details(
+        self,
+        *,
+        terminal_message: Optional[str],
+        exit_code: Optional[int],
+        terminal_log_id: Optional[int] = None,
+        terminal_source: str = "scheduler",
+    ) -> dict[str, Any]:
+        return {
+            "exit_code": exit_code,
+            "terminal_log_id": terminal_log_id,
+            "terminal_message_excerpt": self._build_terminal_message_excerpt(terminal_message or ""),
+            "terminal_source": terminal_source,
+        }
+
+    def _normalize_terminal_log_id(self, value: Any) -> Optional[int]:
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _build_terminal_message_excerpt(self, message: str) -> str:
+        normalized = " ".join(str(message or "").split()).strip()
+        if len(normalized) <= 200:
+            return normalized
+        return f"{normalized[:197]}..."
 
     def _is_run_past_grace_period(self, run: dict[str, Any]) -> bool:
         reference_iso = str(run.get("started_at") or run.get("triggered_at") or "").strip()

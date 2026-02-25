@@ -155,6 +155,27 @@ def test_build_command_keeps_existing_cli_contract():
     assert "--headless" in cmd and "true" in cmd
 
 
+def test_log_buffer_capacity_env_override(monkeypatch):
+    monkeypatch.setenv("CRAWLER_LOG_BUFFER_CAPACITY", "3")
+    manager = CrawlerManager(max_workers=1, enable_output_reader=False)
+    assert manager.log_buffer_capacity == 3
+
+
+def test_log_buffer_capacity_default_is_increased():
+    manager = CrawlerManager(max_workers=1, enable_output_reader=False)
+    assert manager.log_buffer_capacity == 2000
+
+
+def test_log_buffer_capacity_drops_oldest_entries():
+    manager = CrawlerManager(max_workers=1, log_buffer_capacity=3, enable_output_reader=False)
+
+    for idx in range(5):
+        manager._create_log_entry(f"log-{idx}")  # pylint: disable=protected-access
+
+    messages = [entry.message for entry in manager.logs]
+    assert messages == ["log-2", "log-3", "log-4"]
+
+
 def test_build_command_supports_safety_limit_overrides():
     manager = CrawlerManager(max_workers=1, enable_output_reader=False)
     request = CrawlerStartRequest(

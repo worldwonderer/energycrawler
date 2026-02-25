@@ -299,6 +299,9 @@ statusWs.onmessage = (ev) => console.log("[status]", JSON.parse(ev.data));
 # SCHEDULER_ENABLED=true
 # SCHEDULER_POLL_INTERVAL_SEC=10
 # SCHEDULER_DB_PATH=./data/scheduler/scheduler.db
+# SCHEDULER_RUN_TERMINAL_GRACE_SEC=10
+# SCHEDULER_RUNTIME_STATE_BACKFILL_LIMIT=500
+# CRAWLER_LOG_BUFFER_CAPACITY=2000
 
 # 创建关键词调度任务（每 30 分钟）
 curl -s -X POST http://localhost:8080/api/scheduler/jobs \

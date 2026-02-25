@@ -14,10 +14,38 @@ from typing import Any, Optional
 
 _RUN_STATUS_OPEN = {"queued", "running"}
 _RUN_STATUS_TERMINAL = {"completed", "failed", "cancelled"}
+_TERMINAL_MESSAGE_EXCERPT_MAX_LEN = 240
 
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _build_terminal_message_excerpt(message: Optional[str]) -> Optional[str]:
+    if message is None:
+        return None
+    normalized = str(message).strip()
+    if not normalized:
+        return None
+    if len(normalized) <= _TERMINAL_MESSAGE_EXCERPT_MAX_LEN:
+        return normalized
+    return f"{normalized[:_TERMINAL_MESSAGE_EXCERPT_MAX_LEN].rstrip()}…"
+
+
+def _ensure_terminal_details(
+    *,
+    status: str,
+    details: Optional[dict[str, Any]],
+    message: Optional[str],
+) -> dict[str, Any]:
+    payload = dict(details or {})
+    if "exit_code" not in payload:
+        payload["exit_code"] = 0 if status == "completed" else None
+    if "terminal_log_id" not in payload:
+        payload["terminal_log_id"] = None
+    if "terminal_message_excerpt" not in payload:
+        payload["terminal_message_excerpt"] = _build_terminal_message_excerpt(message)
+    return payload
 
 
 def _default_scheduler_db_path() -> Path:
@@ -327,6 +355,13 @@ class SchedulerStore:
             normalized_status = "queued"
         elif normalized_status == "rejected":
             normalized_status = "failed"
+        normalized_details = dict(details or {})
+        if normalized_status in _RUN_STATUS_TERMINAL:
+            normalized_details = _ensure_terminal_details(
+                status=normalized_status,
+                details=normalized_details,
+                message=message,
+            )
         timestamp = triggered_at or _utc_now_iso()
         started_at = timestamp if normalized_status == "running" else None
         finished_at = timestamp if normalized_status in _RUN_STATUS_TERMINAL else None
@@ -347,7 +382,7 @@ class SchedulerStore:
                     normalized_status,
                     task_id,
                     message,
-                    json.dumps(details or {}, ensure_ascii=False),
+                    json.dumps(normalized_details, ensure_ascii=False),
                 ),
             )
             conn.commit()
@@ -454,6 +489,12 @@ class SchedulerStore:
             **(existing.get("details") or {}),
             **(details_patch or {}),
         }
+        if normalized_status in _RUN_STATUS_TERMINAL:
+            merged_details = _ensure_terminal_details(
+                status=normalized_status,
+                details=merged_details,
+                message=existing["message"] if message is None else message,
+            )
 
         started_at = existing.get("started_at")
         finished_at = existing.get("finished_at")

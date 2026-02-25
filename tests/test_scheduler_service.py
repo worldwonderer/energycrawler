@@ -134,11 +134,137 @@ async def test_scheduler_run_lifecycle_queued_to_running_to_completed(monkeypatc
     assert running_runs[0]["finished_at"] is None
 
     fake_manager.cluster["active_task_ids"] = []
-    fake_manager.logs.append(SimpleNamespace(message="[W1] Task task-000010 completed successfully"))
+    fake_manager.logs.append(SimpleNamespace(id=901, message="[W1] Task task-000010 completed successfully"))
     completed_runs = await service.list_runs(job_id=job["job_id"], limit=10)
     assert completed_runs[0]["status"] == "completed"
     assert completed_runs[0]["finished_at"] is not None
     assert completed_runs[0]["details"]["exit_code"] == 0
+    assert completed_runs[0]["details"]["terminal_log_id"] == 901
+    assert "task-000010 completed successfully" in completed_runs[0]["details"]["terminal_message_excerpt"]
+
+
+@pytest.mark.asyncio
+async def test_scheduler_runtime_state_missing_can_be_backfilled_by_late_terminal_log(monkeypatch, tmp_path):
+    class _FakeCrawlerManager:
+        def __init__(self):
+            self.logs: list[SimpleNamespace] = []
+
+        async def start(self, _request):
+            raise AssertionError("start should not be called in this test")
+
+        def get_cluster_status(self):
+            return {
+                "active_task_ids": [],
+                "pending_task_ids": [],
+            }
+
+    fake_manager = _FakeCrawlerManager()
+    monkeypatch.setattr(scheduler_service_module, "crawler_manager", fake_manager)
+    monkeypatch.setenv("SCHEDULER_RUN_TERMINAL_GRACE_SEC", "1")
+
+    store = SchedulerStore(tmp_path / "scheduler.db")
+    service = SchedulerService(store=store, enabled=False, poll_interval_sec=1.0)
+    job = await service.create_job(
+        SchedulerJobCreateRequest(
+            name="late-terminal-backfill",
+            job_type="keyword",
+            platform="xhs",
+            interval_minutes=10,
+            payload={
+                "keywords": "新能源",
+                "save_option": "json",
+                "headless": False,
+                "safety_profile": "balanced",
+            },
+        )
+    )
+
+    run_id = await asyncio.to_thread(
+        store.create_run,
+        job_id=job["job_id"],
+        status="queued",
+        message="Crawler task queued",
+        task_id="task-000283",
+        triggered_at=(datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat(),
+    )
+
+    await service._sync_run_lifecycle()  # pylint: disable=protected-access
+    failed_run = await service.get_run(run_id)
+    assert failed_run["status"] == "failed"
+    assert failed_run["details"]["failure_reason"] == "runtime_state_missing"
+
+    fake_manager.logs.append(SimpleNamespace(id=28301, message="[W2] Task task-000283 exited with code 3"))
+    await service._sync_run_lifecycle()  # pylint: disable=protected-access
+
+    backfilled_run = await service.get_run(run_id)
+    assert backfilled_run["status"] == "failed"
+    assert backfilled_run["message"] == "Crawler task failed with exit code 3"
+    assert backfilled_run["details"]["exit_code"] == 3
+    assert backfilled_run["details"]["terminal_log_id"] == 28301
+    assert "task-000283 exited with code 3" in backfilled_run["details"]["terminal_message_excerpt"]
+    assert backfilled_run["details"]["runtime_state_backfilled"] is True
+
+
+@pytest.mark.asyncio
+async def test_scheduler_runtime_state_missing_backfill_to_completed_clears_failure_reason(monkeypatch, tmp_path):
+    class _FakeCrawlerManager:
+        def __init__(self):
+            self.logs: list[SimpleNamespace] = []
+
+        async def start(self, _request):
+            raise AssertionError("start should not be called in this test")
+
+        def get_cluster_status(self):
+            return {
+                "active_task_ids": [],
+                "pending_task_ids": [],
+            }
+
+    fake_manager = _FakeCrawlerManager()
+    monkeypatch.setattr(scheduler_service_module, "crawler_manager", fake_manager)
+    monkeypatch.setenv("SCHEDULER_RUN_TERMINAL_GRACE_SEC", "1")
+
+    store = SchedulerStore(tmp_path / "scheduler.db")
+    service = SchedulerService(store=store, enabled=False, poll_interval_sec=1.0)
+    job = await service.create_job(
+        SchedulerJobCreateRequest(
+            name="late-terminal-completed-backfill",
+            job_type="keyword",
+            platform="xhs",
+            interval_minutes=10,
+            payload={
+                "keywords": "新能源",
+                "save_option": "json",
+                "headless": False,
+                "safety_profile": "balanced",
+            },
+        )
+    )
+
+    run_id = await asyncio.to_thread(
+        store.create_run,
+        job_id=job["job_id"],
+        status="queued",
+        message="Crawler task queued",
+        task_id="task-000284",
+        triggered_at=(datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat(),
+    )
+
+    await service._sync_run_lifecycle()  # pylint: disable=protected-access
+    first_failed = await service.get_run(run_id)
+    assert first_failed["status"] == "failed"
+    assert first_failed["details"]["failure_reason"] == "runtime_state_missing"
+
+    fake_manager.logs.append(SimpleNamespace(id=28401, message="[W1] Task task-000284 completed successfully"))
+    await service._sync_run_lifecycle()  # pylint: disable=protected-access
+
+    completed_run = await service.get_run(run_id)
+    assert completed_run["status"] == "completed"
+    assert completed_run["message"] == "Crawler task completed successfully"
+    assert completed_run["details"]["exit_code"] == 0
+    assert completed_run["details"]["terminal_log_id"] == 28401
+    assert completed_run["details"]["failure_reason"] is None
+    assert completed_run["details"]["runtime_state_backfilled"] is True
 
 
 @pytest.mark.asyncio
@@ -177,6 +303,9 @@ async def test_scheduler_run_now_rejected_records_failed(monkeypatch, tmp_path):
     assert runs[0]["status"] == "failed"
     assert runs[0]["message"] == "queue full"
     assert runs[0]["finished_at"] is not None
+    assert runs[0]["details"]["exit_code"] is None
+    assert runs[0]["details"]["terminal_log_id"] is None
+    assert runs[0]["details"]["terminal_message_excerpt"] == "queue full"
 
 
 @pytest.mark.asyncio
