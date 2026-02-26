@@ -13,6 +13,7 @@ import config
 from media_platform.xhs.core import XiaoHongShuCrawler
 from store import xhs as xhs_store
 from store.xhs._store_impl import XhsDbStoreImplement
+from tools.auth_watchdog import AuthWatchdogResult
 
 
 class _CaptureStore:
@@ -160,6 +161,45 @@ def test_split_new_notes_before_marker_stops_at_known_note():
     new_notes, marker_found = XiaoHongShuCrawler._split_new_notes_before_marker(notes, "note-known-2")
     assert marker_found is True
     assert [n["id"] for n in new_notes] == ["note-new-3"]
+
+
+@pytest.mark.asyncio
+async def test_start_raises_when_auth_watchdog_fails(monkeypatch):
+    crawler = XiaoHongShuCrawler()
+    close_state = {"called": 0}
+
+    class _FakeClient:
+        async def pong(self):
+            return False
+
+    async def _fake_init_energy_adapter():
+        return None
+
+    async def _fake_create_xhs_client():
+        return _FakeClient()
+
+    async def _fake_watchdog(*_args, **_kwargs):
+        return AuthWatchdogResult(
+            platform="xhs",
+            enabled=True,
+            success=False,
+            attempts=2,
+            message="xhs login state check failed after 2 attempt(s)",
+        )
+
+    async def _fake_close():
+        close_state["called"] += 1
+
+    monkeypatch.setattr(crawler, "_init_energy_adapter", _fake_init_energy_adapter)
+    monkeypatch.setattr(crawler, "_create_xhs_client", _fake_create_xhs_client)
+    monkeypatch.setattr("media_platform.xhs.core.run_auth_watchdog", _fake_watchdog)
+    monkeypatch.setattr(crawler, "close", _fake_close)
+    monkeypatch.setattr(config, "CRAWLER_TYPE", "search")
+
+    with pytest.raises(RuntimeError, match="XHS auth watchdog failed"):
+        await crawler.start()
+
+    assert close_state["called"] == 1
 
 
 @pytest.mark.asyncio

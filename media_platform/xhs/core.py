@@ -27,6 +27,7 @@ Usage:
 """
 
 import asyncio
+import time
 from typing import Dict, List, Any, Optional
 
 import config
@@ -75,6 +76,17 @@ class XiaoHongShuCrawler(AbstractCrawler):
         self.xhs_client = None
         self._cookie_header = getattr(config, "COOKIES", "")
         self._checkpoint = CrawlCheckpointManager()
+        # 降低 watchdog 恢复触发重建+导航的频率，避免页面反复刷新。
+        self._watchdog_rebuild_count = 0
+        self._watchdog_last_rebuild_at = 0.0
+        self._watchdog_rebuild_cooldown_sec = max(
+            0.0,
+            float(getattr(config, "AUTH_WATCHDOG_XHS_REBUILD_COOLDOWN_SEC", 45.0)),
+        )
+        self._watchdog_rebuild_limit = max(
+            0,
+            int(getattr(config, "AUTH_WATCHDOG_XHS_MAX_REBUILDS", 1)),
+        )
 
     @staticmethod
     def _incremental_enabled() -> bool:
@@ -128,8 +140,11 @@ class XiaoHongShuCrawler(AbstractCrawler):
             utils.logger.info("[XiaoHongShuCrawler] Login required, please login via browser first")
             utils.logger.info("[XiaoHongShuCrawler] Or set COOKIES in config")
             utils.logger.warning(f"[XiaoHongShuCrawler] Auth watchdog failed: {watchdog_result.message}")
-            # 在 Energy 模式下，可以手动设置 Cookie 或通过 Energy 浏览器登录
-            return
+            # 鉴权恢复失败时必须显式失败退出，避免上层误判任务成功
+            await self.close()
+            raise RuntimeError(
+                f"XHS auth watchdog failed, crawler aborted: {watchdog_result.message}"
+            )
 
         # 执行爬虫任务
         crawler_type_var.set(config.CRAWLER_TYPE)
@@ -148,7 +163,8 @@ class XiaoHongShuCrawler(AbstractCrawler):
 
         Recovery path:
           1) Force refresh from CookieCloud (optional by config)
-          2) Rebuild browser adapter + client with refreshed cookies
+          2) Refresh runtime cookies in existing browser/client (no full rebuild)
+          3) Fallback to rebuild only when runtime context is missing
         """
         force_cookiecloud_sync = bool(getattr(config, "AUTH_WATCHDOG_FORCE_COOKIECLOUD_SYNC", True))
         sync_result = await asyncio.to_thread(
@@ -169,10 +185,87 @@ class XiaoHongShuCrawler(AbstractCrawler):
             sync_result.message or "no cookiecloud update",
         )
 
-        await self.close()
-        await self._init_energy_adapter()
-        self.xhs_client = await self._create_xhs_client()
-        return bool(sync_result.applied)
+        cookie_map = (
+            utils.convert_str_cookie_to_dict(self._cookie_header)
+            if self._cookie_header
+            else {}
+        )
+        injected = False
+        runtime_cookie_dict: Dict[str, str] = {}
+
+        if self.energy_adapter and cookie_map:
+            cookie_items = [
+                {
+                    "name": key,
+                    "value": value,
+                    "domain": ".xiaohongshu.com",
+                    "path": "/",
+                    "secure": True,
+                    "httpOnly": False,
+                }
+                for key, value in cookie_map.items()
+            ]
+            if cookie_items:
+                try:
+                    injected = bool(self.energy_adapter.set_cookies(cookie_items, domain=".xiaohongshu.com"))
+                except Exception as exc:
+                    utils.logger.warning(
+                        "[XiaoHongShuCrawler] Auth watchdog cookie reinjection failed: %s",
+                        exc,
+                    )
+
+        if self.energy_adapter:
+            try:
+                runtime_cookie_dict = self.energy_adapter.get_cookies() or {}
+            except Exception as exc:
+                utils.logger.warning(
+                    "[XiaoHongShuCrawler] Auth watchdog read runtime cookies failed: %s",
+                    exc,
+                )
+
+        merged_cookie_dict = (
+            {**runtime_cookie_dict, **cookie_map}
+            if cookie_map
+            else runtime_cookie_dict
+        )
+        if self.xhs_client and merged_cookie_dict:
+            self.xhs_client.update_cookies_from_dict(merged_cookie_dict)
+
+        # 优先原页面恢复；仅在上下文缺失时才允许重建，并受冷却/限次保护。
+        if not self.energy_adapter or not self.xhs_client:
+            now = time.monotonic()
+
+            if self._watchdog_rebuild_limit and self._watchdog_rebuild_count >= self._watchdog_rebuild_limit:
+                utils.logger.warning(
+                    "[XiaoHongShuCrawler] Auth watchdog rebuild limit reached (%s), skip rebuild",
+                    self._watchdog_rebuild_limit,
+                )
+                return False
+
+            elapsed = now - self._watchdog_last_rebuild_at
+            if self._watchdog_rebuild_count > 0 and elapsed < self._watchdog_rebuild_cooldown_sec:
+                utils.logger.warning(
+                    "[XiaoHongShuCrawler] Auth watchdog rebuild cooling down (remaining=%.1fs), skip rebuild",
+                    self._watchdog_rebuild_cooldown_sec - elapsed,
+                )
+                return False
+
+            utils.logger.warning(
+                "[XiaoHongShuCrawler] Auth watchdog runtime context missing, fallback to adapter/client rebuild",
+            )
+            await self.close()
+            await self._init_energy_adapter()
+            self.xhs_client = await self._create_xhs_client()
+            self._watchdog_rebuild_count += 1
+            self._watchdog_last_rebuild_at = now
+
+        utils.logger.warning(
+            "[XiaoHongShuCrawler] Auth watchdog recovery attempt %s runtime refresh result: cookie_count=%s injected=%s",
+            attempt,
+            len(cookie_map),
+            injected,
+        )
+        return bool(sync_result.applied) or injected or bool(merged_cookie_dict)
 
     async def _init_energy_adapter(self) -> None:
         """初始化 Energy 浏览器适配器"""
