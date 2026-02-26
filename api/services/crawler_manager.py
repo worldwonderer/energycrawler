@@ -35,6 +35,8 @@ from tools.preflight import build_preflight_failure_hint, preflight_for_platform
 class CrawlerManager:
     """Simplified crawler cluster manager (queue + worker pool)."""
 
+    _SENSITIVE_CLI_FLAGS = {"--cookies"}
+
     _SAFETY_PROFILE_DEFAULTS = {
         SafetyProfileEnum.SAFE: {"max_notes_count": 5, "crawl_sleep_sec": 10.0},
         SafetyProfileEnum.BALANCED: {"max_notes_count": 10, "crawl_sleep_sec": 8.0},
@@ -394,6 +396,32 @@ class CrawlerManager:
 
         return cmd
 
+    def _sanitize_command_for_log(self, cmd: list[str]) -> str:
+        """Mask sensitive CLI argument values before logging command text."""
+        sanitized: list[str] = []
+        redact_next = False
+
+        for token in cmd:
+            if redact_next:
+                sanitized.append("<redacted>")
+                redact_next = False
+                continue
+
+            if token in self._SENSITIVE_CLI_FLAGS:
+                sanitized.append(token)
+                redact_next = True
+                continue
+
+            masked_token = token
+            for flag in self._SENSITIVE_CLI_FLAGS:
+                prefix = f"{flag}="
+                if token.startswith(prefix):
+                    masked_token = f"{flag}=<redacted>"
+                    break
+            sanitized.append(masked_token)
+
+        return " ".join(sanitized)
+
     def _resolve_safety_limits(self, config: CrawlerStartRequest) -> dict:
         max_notes_count = config.max_notes_count
         crawl_sleep_sec = config.crawl_sleep_sec
@@ -558,8 +586,9 @@ class CrawlerManager:
             self.current_config = task.config
             self.status = "running"
 
+            safe_cmd_for_log = self._sanitize_command_for_log(cmd)
             entry = self._create_log_entry(
-                f"[W{worker.worker_id}] Started task {task.task_id}: {' '.join(cmd)}",
+                f"[W{worker.worker_id}] Started task {task.task_id}: {safe_cmd_for_log}",
                 "success",
             )
             await self._push_log(entry)

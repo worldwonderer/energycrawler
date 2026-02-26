@@ -193,6 +193,33 @@ def test_build_command_supports_safety_limit_overrides():
     assert "--crawl_sleep_sec" in cmd and "12.5" in cmd
 
 
+@pytest.mark.asyncio
+async def test_start_log_redacts_cookie_argument(monkeypatch):
+    async def _fake_to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    def _fake_sync(_platform: str, _explicit_cookie_header: str = ""):
+        return CookieCloudSyncResult(platform=_platform, enabled=False, attempted=False)
+
+    monkeypatch.setattr(crawler_manager_module.asyncio, "to_thread", _fake_to_thread)
+    monkeypatch.setattr(crawler_manager_module, "sync_cookiecloud_login_state", _fake_sync)
+    monkeypatch.setattr(crawler_manager_module, "preflight_for_platform", lambda *_args, **_kwargs: (True, "ok"))
+
+    factory = _FakeProcessFactory()
+    manager = CrawlerManager(max_workers=1, process_factory=factory, enable_output_reader=False)
+    request = _make_request()
+    request.cookies = "a1=very-secret-cookie-value"
+
+    result = await manager.start(request)
+    assert result["accepted"] is True
+
+    started_logs = [entry.message for entry in manager.logs if "Started task" in entry.message]
+    assert started_logs
+    message = started_logs[-1]
+    assert "--cookies <redacted>" in message
+    assert "very-secret-cookie-value" not in message
+
+
 def test_build_command_applies_safety_profile_defaults_when_limits_missing():
     manager = CrawlerManager(max_workers=1, enable_output_reader=False)
     request = CrawlerStartRequest(
