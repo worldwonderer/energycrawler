@@ -784,13 +784,30 @@ class CrawlerManager:
         if max_workers is not None:
             candidate = max_workers
         else:
-            raw_value = os.getenv("CRAWLER_MAX_WORKERS", "2")
+            raw_value = os.getenv("CRAWLER_MAX_WORKERS", "1")
             try:
                 candidate = int(raw_value)
             except ValueError:
-                candidate = 2
+                candidate = 1
 
-        return max(1, min(candidate, 16))
+        resolved = max(1, min(candidate, 16))
+        if max_workers is None and resolved > 1 and self._energy_single_window_mode_enabled():
+            utils.logger.warning(
+                "[CrawlerManager] ENERGY_SINGLE_WINDOW_MODE enabled; force CRAWLER_MAX_WORKERS=%s -> 1 "
+                "(current energy-service uses shared browser window)",
+                resolved,
+            )
+            return 1
+        return resolved
+
+    @staticmethod
+    def _energy_single_window_mode_enabled() -> bool:
+        raw_value = str(os.getenv("ENERGY_SINGLE_WINDOW_MODE", "true")).strip().lower()
+        if raw_value in {"1", "true", "yes", "y", "on"}:
+            return True
+        if raw_value in {"0", "false", "no", "n", "off"}:
+            return False
+        return True
 
     def _resolve_max_queue_size(self, max_queue_size: Optional[int]) -> int:
         if max_queue_size is not None:

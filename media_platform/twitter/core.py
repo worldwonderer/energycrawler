@@ -359,7 +359,7 @@ class TwitterCrawler(AbstractCrawler):
                     f"browser_cookie_count={len(browser_all_cookies)})"
                 )
 
-                page_login_ok = await self.energy_adapter.verify_login_via_page()
+                page_login_ok = await self.energy_adapter.verify_login_via_page(navigate_if_needed=False)
                 if page_login_ok:
                     utils.logger.info("[TwitterCrawler._init_energy_adapter] Browser login state verified via page")
                 else:

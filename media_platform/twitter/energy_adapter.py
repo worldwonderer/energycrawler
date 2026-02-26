@@ -45,6 +45,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from threading import Lock
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 import sys
 import os
@@ -593,6 +594,15 @@ class TwitterEnergyAdapter:
         self._retry_delay_ms = retry_delay_ms
         self._retry_backoff_factor = backoff_factor
 
+    @staticmethod
+    def _format_exception(exc: Exception) -> str:
+        """Format exception details with non-empty fallback text."""
+        exc_type = type(exc).__name__
+        message = str(exc).strip()
+        if message:
+            return f"{exc_type}: {message}"
+        return f"{exc_type} (empty error message)"
+
     def clear_cache(self) -> None:
         """Clear all cached data"""
         if self._transaction_id_cache:
@@ -692,10 +702,54 @@ class TwitterEnergyAdapter:
             "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
 
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            resp = await client.get(url, headers=headers)
-            resp.raise_for_status()
-            return resp.text
+        normalized_url = (url or "").strip() or "https://x.com/tesla"
+        candidate_urls = [normalized_url]
+        parsed = urlparse(normalized_url)
+        if parsed.scheme and parsed.netloc and parsed.path not in {"", "/"}:
+            base_url = f"{parsed.scheme}://{parsed.netloc}"
+            if base_url not in candidate_urls:
+                candidate_urls.append(base_url)
+
+        max_attempts = max(1, int(self._max_retries))
+        last_error: Optional[Exception] = None
+
+        for attempt in range(1, max_attempts + 1):
+            target_url = candidate_urls[min(attempt - 1, len(candidate_urls) - 1)]
+            try:
+                async with httpx.AsyncClient(
+                    follow_redirects=True,
+                    timeout=httpx.Timeout(connect=8.0, read=20.0, write=20.0, pool=8.0),
+                ) as client:
+                    resp = await client.get(target_url, headers=headers)
+                    resp.raise_for_status()
+                    return resp.text
+            except (httpx.ConnectTimeout, httpx.ConnectError) as exc:
+                last_error = exc
+                logger.warning(
+                    "[TwitterEnergyAdapter] _get_page_html connect issue (attempt %s/%s, url=%s): %s",
+                    attempt,
+                    max_attempts,
+                    target_url,
+                    self._format_exception(exc),
+                )
+                if attempt >= max_attempts:
+                    break
+                delay_sec = (self._retry_delay_ms / 1000.0) * (self._retry_backoff_factor ** (attempt - 1))
+                await asyncio.sleep(max(0.0, delay_sec))
+            except httpx.HTTPStatusError as exc:
+                raise RuntimeError(
+                    f"_get_page_html failed with HTTP {exc.response.status_code} for {target_url}: "
+                    f"{self._format_exception(exc)}"
+                ) from exc
+            except Exception as exc:
+                raise RuntimeError(
+                    f"_get_page_html failed for {target_url}: {self._format_exception(exc)}"
+                ) from exc
+
+        detail = self._format_exception(last_error) if last_error else "unknown error"
+        raise RuntimeError(
+            f"_get_page_html connect timeout after {max_attempts} attempt(s) for {normalized_url}: {detail}"
+        )
 
     async def _get_ondemand_js_content(self, html: str) -> str:
         """
@@ -774,46 +828,58 @@ class TwitterEnergyAdapter:
         Returns:
             Initialized XClIdGen instance
         """
-        # Get Twitter page HTML via httpx (raw HTML with SVG animations)
-        html = await self._get_page_html("https://x.com/tesla")
+        try:
+            # Get Twitter page HTML via httpx (raw HTML with SVG animations)
+            html = await self._get_page_html("https://x.com/tesla")
+        except Exception as exc:
+            raise RuntimeError(
+                "_init_xclid_gen failed while fetching x page html: "
+                f"{self._format_exception(exc)}"
+            ) from exc
 
-        # Parse verification key bytes from raw HTML
-        vk_bytes = parse_vk_bytes_from_html(html)
-        logger.debug(f"[TwitterEnergyAdapter] Parsed vk_bytes: {vk_bytes[:5]}...")
+        try:
+            # Parse verification key bytes from raw HTML
+            vk_bytes = parse_vk_bytes_from_html(html)
+            logger.debug(f"[TwitterEnergyAdapter] Parsed vk_bytes: {vk_bytes[:5]}...")
 
-        # Parse animation array from raw HTML
-        anim_arr = parse_anim_arr_from_html(html, vk_bytes)
-        logger.debug(f"[TwitterEnergyAdapter] Parsed anim_arr with {len(anim_arr)} frames")
+            # Parse animation array from raw HTML
+            anim_arr = parse_anim_arr_from_html(html, vk_bytes)
+            logger.debug(f"[TwitterEnergyAdapter] Parsed anim_arr with {len(anim_arr)} frames")
 
-        # Get ondemand.s.js URL and fetch content
-        ondemand_url = _get_ondemand_url(html)
-        if not ondemand_url:
-            raise Exception("Couldn't find ondemand.s.js URL")
+            # Get ondemand.s.js URL and fetch content
+            ondemand_url = _get_ondemand_url(html)
+            if not ondemand_url:
+                raise RuntimeError("Couldn't find ondemand.s.js URL")
 
-        # Use browser to fetch JS (to avoid CORS and fingerprinting issues)
-        # First ensure browser is initialized
-        await self.ensure_initialized()
-        js_content = await self._fetch_js_via_browser(ondemand_url)
+            # Use browser to fetch JS (to avoid CORS and fingerprinting issues)
+            # First ensure browser is initialized
+            await self.ensure_initialized()
+            js_content = await self._fetch_js_via_browser(ondemand_url)
 
-        # Parse animation indices
-        anim_idx = parse_anim_idx(js_content)
-        logger.debug(f"[TwitterEnergyAdapter] Parsed anim_idx: {anim_idx}")
+            # Parse animation indices
+            anim_idx = parse_anim_idx(js_content)
+            logger.debug(f"[TwitterEnergyAdapter] Parsed anim_idx: {anim_idx}")
 
-        # Calculate animation key
-        frame_time = 1
-        for x in anim_idx[1:]:
-            frame_time *= vk_bytes[x] % 16
+            # Calculate animation key
+            frame_time = 1
+            for x in anim_idx[1:]:
+                frame_time *= vk_bytes[x] % 16
 
-        frame_idx = vk_bytes[anim_idx[0]] % 16
-        frame_row = anim_arr[frame_idx]
-        frame_dur = float(frame_time) / 4096
+            frame_idx = vk_bytes[anim_idx[0]] % 16
+            frame_row = anim_arr[frame_idx]
+            frame_dur = float(frame_time) / 4096
 
-        anim_key = cacl_anim_key(frame_row, frame_dur)
-        logger.debug(f"[TwitterEnergyAdapter] Calculated anim_key: {anim_key}")
+            anim_key = cacl_anim_key(frame_row, frame_dur)
+            logger.debug(f"[TwitterEnergyAdapter] Calculated anim_key: {anim_key}")
 
-        # Create XClIdGen instance
-        self._xclid_gen = XClIdGen(vk_bytes, anim_key)
-        return self._xclid_gen
+            # Create XClIdGen instance
+            self._xclid_gen = XClIdGen(vk_bytes, anim_key)
+            return self._xclid_gen
+        except Exception as exc:
+            raise RuntimeError(
+                "_init_xclid_gen failed while parsing/generating transaction key material: "
+                f"{self._format_exception(exc)}"
+            ) from exc
 
     # ==================== Transaction ID Generation ====================
 
@@ -852,8 +918,9 @@ class TwitterEnergyAdapter:
             try:
                 await self._init_xclid_gen()
             except Exception as e:
-                logger.error(f"[TwitterEnergyAdapter] Failed to initialize XClIdGen: {e}")
-                raise
+                detail = self._format_exception(e)
+                logger.error("[TwitterEnergyAdapter] Failed to initialize XClIdGen: %s", detail)
+                raise RuntimeError(f"Failed to initialize XClIdGen: {detail}") from e
 
         # Generate transaction ID
         transaction_id = self._xclid_gen.calc(method, path)
@@ -1048,51 +1115,66 @@ class TwitterEnergyAdapter:
         cookies = self.get_cookies()
         return self.AUTH_COOKIE_NAME in cookies and bool(cookies[self.AUTH_COOKIE_NAME])
 
-    async def verify_login_via_page(self) -> bool:
+    @staticmethod
+    def _js_result_is_true(result: Any) -> bool:
+        normalized = str(result or "").strip().strip('"').lower()
+        return normalized == "true"
+
+    def _check_login_signal_in_current_page(self) -> bool:
+        script = """
+        (function() {
+            // Check if we're on login page
+            const path = window.location.pathname || '';
+            if (
+                path === '/login' ||
+                path.startsWith('/i/flow/login') ||
+                path.startsWith('/i/flow/signup')
+            ) {
+                return false;
+            }
+
+            // Check for logged-in user indicators
+            const homeLink = document.querySelector('a[href="/home"], a[data-testid="AppTabBar_Home_Link"]');
+            const postButton = document.querySelector('[data-testid="SideNav_NewTweet_Button"]');
+            const accountSwitcher = document.querySelector('[data-testid="SideNav_AccountSwitcher_Button"]');
+            if (homeLink || postButton || accountSwitcher) {
+                return true;
+            }
+
+            // Check for react root with logged-in state
+            const reactRoot = document.querySelector('#react-root');
+            if (reactRoot && reactRoot.getAttribute('data-logged-in') === 'true') {
+                return true;
+            }
+
+            return false;
+        })();
+        """
+        result = self._execute_js_raw(script)
+        return self._js_result_is_true(result)
+
+    async def verify_login_via_page(self, navigate_if_needed: bool = True) -> bool:
         """
         Verify login state by checking page content.
+
+        Args:
+            navigate_if_needed: Whether to navigate to `/home` when current page
+                does not expose clear logged-in signals.
 
         Returns:
             True if logged in, False otherwise
         """
         try:
-            # Navigate to home page
+            if self._check_login_signal_in_current_page():
+                return True
+
+            if not navigate_if_needed:
+                return False
+
+            # Fallback: navigate to home page and verify again.
             self.browser.navigate(self.browser_id, self.TWITTER_HOME_URL, timeout_ms=15000)
             await asyncio.sleep(2)
-
-            # Check if we're redirected to login page
-            script = """
-            (function() {
-                // Check if we're on login page
-                const path = window.location.pathname || '';
-                if (
-                    path === '/login' ||
-                    path.startsWith('/i/flow/login') ||
-                    path.startsWith('/i/flow/signup')
-                ) {
-                    return false;
-                }
-
-                // Check for logged-in user indicators
-                const homeLink = document.querySelector('a[href="/home"], a[data-testid="AppTabBar_Home_Link"]');
-                const postButton = document.querySelector('[data-testid="SideNav_NewTweet_Button"]');
-                const accountSwitcher = document.querySelector('[data-testid="SideNav_AccountSwitcher_Button"]');
-                if (homeLink || postButton || accountSwitcher) {
-                    return true;
-                }
-
-                // Check for react root with logged-in state
-                const reactRoot = document.querySelector('#react-root');
-                if (reactRoot && reactRoot.getAttribute('data-logged-in') === 'true') {
-                    return true;
-                }
-
-                return false;
-            })();
-            """
-
-            result = self._execute_js_raw(script)
-            return result and result.lower() == 'true'
+            return self._check_login_signal_in_current_page()
 
         except Exception as e:
             logger.warning(f"[TwitterEnergyAdapter] Failed to verify login via page: {e}")

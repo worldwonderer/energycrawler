@@ -166,6 +166,26 @@ def test_log_buffer_capacity_default_is_increased():
     assert manager.log_buffer_capacity == 2000
 
 
+def test_max_workers_defaults_to_single_window_guard(monkeypatch):
+    monkeypatch.delenv("CRAWLER_MAX_WORKERS", raising=False)
+    monkeypatch.delenv("ENERGY_SINGLE_WINDOW_MODE", raising=False)
+    manager = CrawlerManager(enable_output_reader=False)
+    assert manager.max_workers == 1
+
+
+def test_max_workers_single_window_guard_can_be_disabled(monkeypatch):
+    monkeypatch.setenv("CRAWLER_MAX_WORKERS", "3")
+    monkeypatch.setenv("ENERGY_SINGLE_WINDOW_MODE", "false")
+    manager = CrawlerManager(enable_output_reader=False)
+    assert manager.max_workers == 3
+
+
+def test_explicit_max_workers_keeps_requested_value_even_with_guard(monkeypatch):
+    monkeypatch.setenv("ENERGY_SINGLE_WINDOW_MODE", "true")
+    manager = CrawlerManager(max_workers=2, enable_output_reader=False)
+    assert manager.max_workers == 2
+
+
 def test_log_buffer_capacity_drops_oldest_entries():
     manager = CrawlerManager(max_workers=1, log_buffer_capacity=3, enable_output_reader=False)
 
