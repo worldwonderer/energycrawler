@@ -76,7 +76,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
         self.xhs_client = None
         self._cookie_header = getattr(config, "COOKIES", "")
         self._checkpoint = CrawlCheckpointManager()
-        # 降低 watchdog 恢复触发重建+导航的频率，避免页面反复刷新。
+        # Reduce forced browser rebuild frequency in watchdog recovery path.
         self._watchdog_rebuild_count = 0
         self._watchdog_last_rebuild_at = 0.0
         self._watchdog_rebuild_cooldown_sec = max(
@@ -163,8 +163,9 @@ class XiaoHongShuCrawler(AbstractCrawler):
 
         Recovery path:
           1) Force refresh from CookieCloud (optional by config)
-          2) Refresh runtime cookies in existing browser/client (no full rebuild)
-          3) Fallback to rebuild only when runtime context is missing
+          2) Refresh runtime cookies in existing browser/client
+          3) Rebuild adapter/client only when runtime context is missing
+             and rebuild cooldown/limit allows it
         """
         force_cookiecloud_sync = bool(getattr(config, "AUTH_WATCHDOG_FORCE_COOKIECLOUD_SYNC", True))
         sync_result = await asyncio.to_thread(
@@ -178,12 +179,6 @@ class XiaoHongShuCrawler(AbstractCrawler):
             self._cookie_header = sync_result.cookie_header
         elif getattr(config, "COOKIES", "").strip():
             self._cookie_header = getattr(config, "COOKIES", "").strip()
-
-        utils.logger.warning(
-            "[XiaoHongShuCrawler] Auth watchdog recovery attempt %s: %s",
-            attempt,
-            sync_result.message or "no cookiecloud update",
-        )
 
         cookie_map = (
             utils.convert_str_cookie_to_dict(self._cookie_header)
@@ -231,41 +226,43 @@ class XiaoHongShuCrawler(AbstractCrawler):
         if self.xhs_client and merged_cookie_dict:
             self.xhs_client.update_cookies_from_dict(merged_cookie_dict)
 
-        # 优先原页面恢复；仅在上下文缺失时才允许重建，并受冷却/限次保护。
-        if not self.energy_adapter or not self.xhs_client:
-            now = time.monotonic()
-
-            if self._watchdog_rebuild_limit and self._watchdog_rebuild_count >= self._watchdog_rebuild_limit:
-                utils.logger.warning(
-                    "[XiaoHongShuCrawler] Auth watchdog rebuild limit reached (%s), skip rebuild",
-                    self._watchdog_rebuild_limit,
-                )
-                return False
-
-            elapsed = now - self._watchdog_last_rebuild_at
-            if self._watchdog_rebuild_count > 0 and elapsed < self._watchdog_rebuild_cooldown_sec:
-                utils.logger.warning(
-                    "[XiaoHongShuCrawler] Auth watchdog rebuild cooling down (remaining=%.1fs), skip rebuild",
-                    self._watchdog_rebuild_cooldown_sec - elapsed,
-                )
-                return False
-
+        if self.energy_adapter and self.xhs_client:
             utils.logger.warning(
-                "[XiaoHongShuCrawler] Auth watchdog runtime context missing, fallback to adapter/client rebuild",
+                "[XiaoHongShuCrawler] Auth watchdog recovery attempt %s: %s (runtime_refresh, cookie_count=%s, injected=%s)",
+                attempt,
+                sync_result.message or "no cookiecloud update",
+                len(cookie_map),
+                injected,
             )
-            await self.close()
-            await self._init_energy_adapter()
-            self.xhs_client = await self._create_xhs_client()
-            self._watchdog_rebuild_count += 1
-            self._watchdog_last_rebuild_at = now
+            return bool(sync_result.applied) or injected or bool(merged_cookie_dict)
+
+        now = time.monotonic()
+        if self._watchdog_rebuild_limit and self._watchdog_rebuild_count >= self._watchdog_rebuild_limit:
+            utils.logger.warning(
+                "[XiaoHongShuCrawler] Auth watchdog rebuild limit reached (%s), skip rebuild",
+                self._watchdog_rebuild_limit,
+            )
+            return False
+
+        elapsed = now - self._watchdog_last_rebuild_at
+        if self._watchdog_rebuild_count > 0 and elapsed < self._watchdog_rebuild_cooldown_sec:
+            utils.logger.warning(
+                "[XiaoHongShuCrawler] Auth watchdog rebuild cooling down (remaining=%.1fs), skip rebuild",
+                self._watchdog_rebuild_cooldown_sec - elapsed,
+            )
+            return False
 
         utils.logger.warning(
-            "[XiaoHongShuCrawler] Auth watchdog recovery attempt %s runtime refresh result: cookie_count=%s injected=%s",
+            "[XiaoHongShuCrawler] Auth watchdog recovery attempt %s: %s (fallback_rebuild)",
             attempt,
-            len(cookie_map),
-            injected,
+            sync_result.message or "no cookiecloud update",
         )
-        return bool(sync_result.applied) or injected or bool(merged_cookie_dict)
+        await self.close()
+        await self._init_energy_adapter()
+        self.xhs_client = await self._create_xhs_client()
+        self._watchdog_rebuild_count += 1
+        self._watchdog_last_rebuild_at = now
+        return bool(sync_result.applied) or bool(cookie_map)
 
     async def _init_energy_adapter(self) -> None:
         """初始化 Energy 浏览器适配器"""

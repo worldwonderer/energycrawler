@@ -14,6 +14,7 @@ from media_platform.xhs.core import XiaoHongShuCrawler
 from store import xhs as xhs_store
 from store.xhs._store_impl import XhsDbStoreImplement
 from tools.auth_watchdog import AuthWatchdogResult
+from tools.cookiecloud_sync import CookieCloudSyncResult
 
 
 class _CaptureStore:
@@ -225,3 +226,109 @@ async def test_create_xhs_client_prefers_explicit_cookie_values_over_runtime_coo
     assert client.cookie_dict["id_token"] == "config-id-token"
     # Runtime-only cookies should still be retained.
     assert client.cookie_dict["acw_tc"] == "runtime-acw"
+
+
+@pytest.mark.asyncio
+async def test_watchdog_recover_xhs_auth_skips_rebuild_during_cooldown(monkeypatch):
+    crawler = XiaoHongShuCrawler()
+    crawler.energy_adapter = None
+    crawler.xhs_client = None
+    crawler._watchdog_rebuild_limit = 2
+    crawler._watchdog_rebuild_count = 1
+    crawler._watchdog_rebuild_cooldown_sec = 30.0
+    crawler._watchdog_last_rebuild_at = 100.0
+
+    async def _fake_to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    def _fake_sync(*_args, **_kwargs):
+        return CookieCloudSyncResult(
+            platform="xhs",
+            attempted=True,
+            applied=True,
+            cookie_header="a1=sync-a1",
+            cookie_count=1,
+            message="applied",
+        )
+
+    calls = {"close": 0, "init": 0, "create": 0}
+
+    async def _fake_close():
+        calls["close"] += 1
+
+    async def _fake_init():
+        calls["init"] += 1
+
+    async def _fake_create():
+        calls["create"] += 1
+        return object()
+
+    monkeypatch.setattr("media_platform.xhs.core.asyncio.to_thread", _fake_to_thread)
+    monkeypatch.setattr("media_platform.xhs.core.sync_cookiecloud_login_state", _fake_sync)
+    monkeypatch.setattr("media_platform.xhs.core.time.monotonic", lambda: 110.0)
+    monkeypatch.setattr(crawler, "close", _fake_close)
+    monkeypatch.setattr(crawler, "_init_energy_adapter", _fake_init)
+    monkeypatch.setattr(crawler, "_create_xhs_client", _fake_create)
+
+    recovered = await crawler._watchdog_recover_xhs_auth(2)
+
+    assert recovered is False
+    assert calls == {"close": 0, "init": 0, "create": 0}
+
+
+@pytest.mark.asyncio
+async def test_watchdog_recover_xhs_auth_respects_rebuild_limit(monkeypatch):
+    crawler = XiaoHongShuCrawler()
+    crawler.energy_adapter = None
+    crawler.xhs_client = None
+    crawler._watchdog_rebuild_limit = 1
+    crawler._watchdog_rebuild_count = 0
+    crawler._watchdog_rebuild_cooldown_sec = 0.0
+    crawler._watchdog_last_rebuild_at = 0.0
+    crawler._cookie_header = ""
+
+    async def _fake_to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    def _fake_sync(*_args, **_kwargs):
+        return CookieCloudSyncResult(
+            platform="xhs",
+            attempted=True,
+            applied=False,
+            cookie_header="",
+            cookie_count=0,
+            message="no update",
+        )
+
+    calls = {"close": 0, "init": 0, "create": 0}
+
+    async def _fake_close():
+        calls["close"] += 1
+
+    async def _fake_init():
+        calls["init"] += 1
+        crawler.energy_adapter = object()
+
+    async def _fake_create():
+        calls["create"] += 1
+        return object()
+
+    monkeypatch.setattr(config, "COOKIES", "")
+    monkeypatch.setattr("media_platform.xhs.core.asyncio.to_thread", _fake_to_thread)
+    monkeypatch.setattr("media_platform.xhs.core.sync_cookiecloud_login_state", _fake_sync)
+    monkeypatch.setattr("media_platform.xhs.core.time.monotonic", lambda: 100.0)
+    monkeypatch.setattr(crawler, "close", _fake_close)
+    monkeypatch.setattr(crawler, "_init_energy_adapter", _fake_init)
+    monkeypatch.setattr(crawler, "_create_xhs_client", _fake_create)
+
+    first = await crawler._watchdog_recover_xhs_auth(1)
+    assert first is False
+    assert calls == {"close": 1, "init": 1, "create": 1}
+    assert crawler._watchdog_rebuild_count == 1
+
+    crawler.energy_adapter = None
+    crawler.xhs_client = None
+
+    second = await crawler._watchdog_recover_xhs_auth(2)
+    assert second is False
+    assert calls == {"close": 1, "init": 1, "create": 1}
