@@ -69,6 +69,33 @@ class XiaoHongShuClient(AbstractApiClient):
         if self._energy_adapter is None:
             raise ValueError("Energy adapter is required for XiaoHongShuClient")
 
+    def _resolve_a1_for_signing(self) -> str:
+        a1_value = (self.cookie_dict or {}).get("a1", "")
+        if a1_value:
+            return a1_value
+
+        cookie_header = (self.headers or {}).get("Cookie", "")
+        for item in cookie_header.split(";"):
+            part = item.strip()
+            if not part or "=" not in part:
+                continue
+            key, value = part.split("=", 1)
+            if key.strip() == "a1":
+                return value.strip()
+
+        if self._energy_adapter is not None:
+            try:
+                runtime_cookie_dict = self._energy_adapter.get_cookies() or {}
+                runtime_a1 = runtime_cookie_dict.get("a1", "")
+                if runtime_a1:
+                    merged_cookie_dict = {**runtime_cookie_dict, **self.cookie_dict}
+                    self.update_cookies_from_dict(merged_cookie_dict)
+                    return runtime_a1
+            except Exception:
+                return ""
+
+        return ""
+
     async def _pre_headers(self, url: str, params: Optional[Dict] = None, payload: Optional[Dict] = None) -> Dict:
         """Request header parameter signing
 
@@ -82,7 +109,7 @@ class XiaoHongShuClient(AbstractApiClient):
         Returns:
             Dict: Signed request header parameters
         """
-        a1_value = self.cookie_dict.get("a1", "")
+        a1_value = self._resolve_a1_for_signing()
 
         # Determine request data, method and URI
         if params is not None:

@@ -690,7 +690,18 @@ class XHSEnergyAdapter:
         """
         url = "https://www.xiaohongshu.com"
         cookies = self.browser.get_cookies(self.browser_id, url)
-        return {c.name: c.value for c in cookies if domain in c.domain or not c.domain}
+        normalized_target = (domain or "").strip().lstrip(".").lower()
+        result: Dict[str, str] = {}
+
+        for c in cookies:
+            cookie_domain = (c.domain or "").strip().lstrip(".").lower()
+            if not normalized_target or not cookie_domain:
+                result[c.name] = c.value
+                continue
+            if cookie_domain == normalized_target or cookie_domain.endswith("." + normalized_target):
+                result[c.name] = c.value
+
+        return result
 
     def set_cookies(self, cookies: List[Dict[str, str]], domain: str = ".xiaohongshu.com") -> bool:
         """
@@ -715,6 +726,56 @@ class XHSEnergyAdapter:
             ))
 
         return self.browser.set_cookies(self.browser_id, cookie_objects)
+
+    def set_cookies_via_js(self, cookies_dict: Dict[str, str], domain: str = ".xiaohongshu.com") -> bool:
+        """
+        Set non-HttpOnly cookies via document.cookie in page context.
+
+        This is a practical fallback when backend SetCookies reports success
+        but runtime cookie values are not updated as expected.
+
+        Args:
+            cookies_dict: Dictionary of cookie name -> value.
+            domain: Cookie domain used in document.cookie assignment.
+
+        Returns:
+            True when script execution succeeds and at least one cookie entry
+            is attempted.
+        """
+        if not cookies_dict:
+            return False
+
+        cookie_items = [
+            {"name": name, "value": value}
+            for name, value in cookies_dict.items()
+            if name
+        ]
+        if not cookie_items:
+            return False
+
+        normalized_domain = (domain or "").strip() or ".xiaohongshu.com"
+        script = f"""
+        (function() {{
+            const items = {json.dumps(cookie_items, ensure_ascii=False)};
+            const domain = {json.dumps(normalized_domain)};
+            for (const item of items) {{
+                const cookieStr = item.name + "=" + item.value + "; path=/; domain=" + domain + "; secure";
+                document.cookie = cookieStr;
+            }}
+            return JSON.stringify({{ok: true, count: items.length}});
+        }})();
+        """
+
+        try:
+            result = self._execute_js_raw(script)
+            if not result:
+                return False
+            parsed = json.loads(result) if isinstance(result, str) else result
+            if isinstance(parsed, dict):
+                return bool(parsed.get("ok")) and int(parsed.get("count", 0)) > 0
+            return bool(parsed)
+        except Exception:
+            return False
 
 def create_xhs_energy_adapter(
     host: str = 'localhost',

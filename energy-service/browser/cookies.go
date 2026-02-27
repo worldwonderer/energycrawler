@@ -2,6 +2,7 @@ package browser
 
 import (
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -109,6 +110,12 @@ func (m *Manager) SetCookies(id string, cookies []Cookie) error {
 
 	var setErr error
 	cef.QueueSyncCall(func(_ int) {
+		devtoolsMsgID := int32(2000)
+		networkEnableArgs := cef.DictionaryValueRef.New()
+		if msgID := chromium.ExecuteDevToolsMethod(devtoolsMsgID, "Network.enable", networkEnableArgs); msgID > 0 {
+			devtoolsMsgID = msgID
+		}
+
 		// Set each cookie on the UI thread.
 		// CEF expects a valid URL host (without leading dot), while cookie Domain
 		// may legitimately start with ".".
@@ -146,10 +153,28 @@ func (m *Manager) SetCookies(id string, cookies []Cookie) error {
 				true,                                         // SetImmediately
 				int32(i+1),                                   // ID
 			)
+
+			// DevTools fallback path: ensures HttpOnly/session cookies can be
+			// set in runtime contexts where CEF SetCookie alone is not effective.
+			args := cef.DictionaryValueRef.New()
+			args.SetString("name", c.Name)
+			args.SetString("value", c.Value)
+			args.SetString("url", cookieURL)
+			args.SetString("domain", domain)
+			args.SetString("path", path)
+			args.SetBool("secure", c.Secure)
+			args.SetBool("httpOnly", c.HttpOnly)
+			msgID := chromium.ExecuteDevToolsMethod(devtoolsMsgID+1, "Network.setCookie", args)
+			if msgID > 0 {
+				devtoolsMsgID = msgID
+			} else {
+				log.Printf("[Cookie] Network.setCookie failed to dispatch: name=%s domain=%s", c.Name, domain)
+			}
 		}
 
 		// Force write-through to avoid races where immediate read misses new cookies.
 		chromium.FlushCookieStore(true)
+		time.Sleep(150 * time.Millisecond)
 	})
 	if setErr != nil {
 		return setErr

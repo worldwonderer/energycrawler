@@ -27,6 +27,7 @@ Usage:
 """
 
 import asyncio
+import hashlib
 import time
 from typing import Dict, List, Any, Optional
 
@@ -68,6 +69,25 @@ class XiaoHongShuCrawler(AbstractCrawler):
 
     xhs_client: XiaoHongShuClient
     energy_adapter: Any
+    _COOKIE_RUNTIME_VERIFY_KEYS = (
+        "a1",
+        "webId",
+        "gid",
+        "abRequestId",
+        "xsecappid",
+    )
+    _COOKIE_JS_FALLBACK_KEYS = (
+        "a1",
+        "webId",
+        "gid",
+        "abRequestId",
+        "xsecappid",
+        "webBuild",
+        "websectiga",
+        "sec_poison_id",
+        "loadts",
+        "acw_tc",
+    )
 
     def __init__(self) -> None:
         self.index_url = "https://www.xiaohongshu.com"
@@ -118,6 +138,127 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 break
             new_notes.append(note)
         return new_notes, marker_found
+
+    @staticmethod
+    def _cookie_hash(value: str) -> str:
+        if not value:
+            return "missing"
+        return hashlib.md5(value.encode("utf-8")).hexdigest()[:10]
+
+    @classmethod
+    def _collect_cookie_mismatch(
+        cls,
+        expected: Dict[str, str],
+        runtime_cookie_dict: Dict[str, str],
+    ) -> Dict[str, Dict[str, str]]:
+        mismatch: Dict[str, Dict[str, str]] = {}
+        for key in cls._COOKIE_RUNTIME_VERIFY_KEYS:
+            expected_value = expected.get(key, "")
+            if not expected_value:
+                continue
+            runtime_value = runtime_cookie_dict.get(key, "")
+            if runtime_value != expected_value:
+                mismatch[key] = {
+                    "expected_hash": cls._cookie_hash(expected_value),
+                    "runtime_hash": cls._cookie_hash(runtime_value),
+                }
+        return mismatch
+
+    def _build_cookie_items(self, cookie_map: Dict[str, str]) -> List[Dict[str, Any]]:
+        http_only_keys = {"web_session", "id_token"}
+        return [
+            {
+                "name": key,
+                "value": value,
+                "domain": ".xiaohongshu.com",
+                "path": "/",
+                "secure": True,
+                "httpOnly": key in http_only_keys,
+            }
+            for key, value in cookie_map.items()
+        ]
+
+    def _inject_runtime_cookies(
+        self,
+        cookie_map: Dict[str, str],
+        *,
+        source: str,
+    ) -> tuple[bool, Dict[str, str], Dict[str, Dict[str, str]]]:
+        if not self.energy_adapter or not cookie_map:
+            return False, {}, {}
+
+        injected = False
+        cookie_items = self._build_cookie_items(cookie_map)
+        if cookie_items:
+            try:
+                injected = bool(self.energy_adapter.set_cookies(cookie_items, domain=".xiaohongshu.com"))
+            except Exception as exc:
+                utils.logger.warning(
+                    "[XiaoHongShuCrawler] %s: backend cookie injection failed: %s",
+                    source,
+                    exc,
+                )
+
+        runtime_cookie_dict: Dict[str, str] = {}
+        try:
+            runtime_cookie_dict = self.energy_adapter.get_cookies() or {}
+        except Exception as exc:
+            utils.logger.warning(
+                "[XiaoHongShuCrawler] %s: read runtime cookies failed: %s",
+                source,
+                exc,
+            )
+
+        mismatch = self._collect_cookie_mismatch(cookie_map, runtime_cookie_dict)
+        js_fallback_applied = False
+        if mismatch:
+            js_cookie_payload = {
+                key: value
+                for key, value in cookie_map.items()
+                if key in self._COOKIE_JS_FALLBACK_KEYS
+            }
+            if js_cookie_payload:
+                try:
+                    js_fallback_applied = bool(
+                        self.energy_adapter.set_cookies_via_js(
+                            js_cookie_payload,
+                            domain=".xiaohongshu.com",
+                        )
+                    )
+                except Exception as exc:
+                    utils.logger.warning(
+                        "[XiaoHongShuCrawler] %s: JS cookie fallback failed: %s",
+                        source,
+                        exc,
+                    )
+
+                if js_fallback_applied:
+                    try:
+                        runtime_cookie_dict = self.energy_adapter.get_cookies() or {}
+                    except Exception as exc:
+                        utils.logger.warning(
+                            "[XiaoHongShuCrawler] %s: read runtime cookies after JS fallback failed: %s",
+                            source,
+                            exc,
+                        )
+                    mismatch = self._collect_cookie_mismatch(cookie_map, runtime_cookie_dict)
+
+        if mismatch:
+            utils.logger.warning(
+                "[XiaoHongShuCrawler] %s: runtime cookie mismatch after injection (count=%s, details=%s)",
+                source,
+                len(mismatch),
+                mismatch,
+            )
+        else:
+            utils.logger.info(
+                "[XiaoHongShuCrawler] %s: runtime cookie verification passed (verified_keys=%s, js_fallback=%s)",
+                source,
+                len(self._COOKIE_RUNTIME_VERIFY_KEYS),
+                js_fallback_applied,
+            )
+
+        return bool(injected or js_fallback_applied), runtime_cookie_dict, mismatch
 
     async def start(self) -> None:
         """启动爬虫"""
@@ -187,29 +328,12 @@ class XiaoHongShuCrawler(AbstractCrawler):
         )
         injected = False
         runtime_cookie_dict: Dict[str, str] = {}
-
         if self.energy_adapter and cookie_map:
-            cookie_items = [
-                {
-                    "name": key,
-                    "value": value,
-                    "domain": ".xiaohongshu.com",
-                    "path": "/",
-                    "secure": True,
-                    "httpOnly": False,
-                }
-                for key, value in cookie_map.items()
-            ]
-            if cookie_items:
-                try:
-                    injected = bool(self.energy_adapter.set_cookies(cookie_items, domain=".xiaohongshu.com"))
-                except Exception as exc:
-                    utils.logger.warning(
-                        "[XiaoHongShuCrawler] Auth watchdog cookie reinjection failed: %s",
-                        exc,
-                    )
-
-        if self.energy_adapter:
+            injected, runtime_cookie_dict, _ = self._inject_runtime_cookies(
+                cookie_map,
+                source=f"Auth watchdog attempt {attempt}",
+            )
+        elif self.energy_adapter:
             try:
                 runtime_cookie_dict = self.energy_adapter.get_cookies() or {}
             except Exception as exc:
@@ -283,22 +407,16 @@ class XiaoHongShuCrawler(AbstractCrawler):
         # 如果配置了 COOKIES，优先注入到 Energy 浏览器会话，避免每次重启都需手动登录。
         if self._cookie_header:
             cookie_map = utils.convert_str_cookie_to_dict(self._cookie_header)
-            cookie_items = [
-                {
-                    "name": key,
-                    "value": value,
-                    "domain": ".xiaohongshu.com",
-                    "path": "/",
-                    "secure": True,
-                    "httpOnly": False,
-                }
-                for key, value in cookie_map.items()
-            ]
-            if cookie_items:
-                injected = self.energy_adapter.set_cookies(cookie_items, domain=".xiaohongshu.com")
-                utils.logger.info(
-                    f"[XiaoHongShuCrawler] Injected cookies from config (count={len(cookie_items)}, success={injected})"
-                )
+            injected, _, mismatch = self._inject_runtime_cookies(
+                cookie_map,
+                source="Init",
+            )
+            utils.logger.info(
+                "[XiaoHongShuCrawler] Injected cookies from config (count=%s, success=%s, mismatch_count=%s)",
+                len(cookie_map),
+                injected,
+                len(mismatch),
+            )
 
         # 等待页面加载
         await asyncio.sleep(3)
